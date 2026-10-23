@@ -37,3 +37,8 @@ opt-level = 3
 
 [package.metadata.docs.rs]
 all-features = true
+
+# The integration tests use the native-test runtime: `cargo test --all-features`.
+[[test]]
+name = "stored"
+required-features = ["native-test"]

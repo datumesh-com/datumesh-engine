@@ -123,7 +123,8 @@ pub(crate) struct Req<'e> {
     eng: &'e Engine,
     asof: String,
     issued: String,
-    names: HashMap<String, Option<String>>,
+    /// Names resolved: the function hash and the start of the binding.
+    names: HashMap<String, Option<(String, String)>>,
     done: HashMap<String, Done>,
     fresh: Vec<Fresh>,
     /// The answers this request made (not taken from the memo), inputs first: for the memo.
@@ -145,42 +146,48 @@ impl<'e> Req<'e> {
         }
     }
 
-    /// The asof of a new receipt, from `latest`, the latest instant from which every input's
-    /// answer holds (the latest input asof, SPEC 8.2 rule 2, unless an input is a version
-    /// kept or validated across a change of its own inputs): `latest` when every function
-    /// name the value depends on resolved then as it does as of the request's asof, so that
-    /// the receipt's value is the cell's value as of its own asof and recomputes there.
-    /// Otherwise (a name bound, or rebound, after it: the store does not say when a binding
-    /// began) the request's asof, at which the names are known.
-    fn knowable_asof(&mut self, latest: String, names: &BTreeMap<String, String>) -> Result<String, EvalError> {
-        if latest == self.asof {
-            return Ok(latest);
-        }
+    /// The asof of a new receipt: the latest of `latest`, the latest instant from which every
+    /// input's answer holds (the latest input asof, SPEC 8.2 rule 2, unless an input is a
+    /// version kept or validated across a change of its own inputs), and the start of every
+    /// name binding the value relied on (`names`: the names read, transitively). From then on,
+    /// up to the request's asof, the inputs and the names are as they were read, so the
+    /// receipt's value is the cell's value as of its own asof and recomputes there.
+    fn binding_asof(&mut self, latest: String, names: &BTreeMap<String, String>) -> Result<String, EvalError> {
+        let mut asof = latest;
         for (name, hash) in names {
-            let at = self
-                .eng
-                .store
-                .resolve_name(name, &latest)
-                .map_err(|e| EvalError::Store(StoreError::new("resolve_name", e)))?;
-            if at.as_deref() != Some(hash.as_str()) {
-                return Ok(self.asof.clone());
+            match self.binding(name)? {
+                Some((h, start)) if h == *hash => {
+                    if start > asof {
+                        asof = start;
+                    }
+                }
+                // Not as recorded (cannot happen: every name was resolved in this request):
+                // the request's asof, at which the names are known.
+                _ => return Ok(self.asof.clone()),
             }
         }
-        Ok(latest)
+        Ok(asof)
     }
 
-    /// The function hash `fn_name` resolves to as of the request's asof (once per request).
-    fn resolve(&mut self, fn_name: &str) -> Result<Option<String>, EvalError> {
-        if let Some(h) = self.names.get(fn_name) {
-            return Ok(h.clone());
+    /// The binding `fn_name` has as of the request's asof, its function hash and when it
+    /// began (one query per name per request).
+    fn binding(&mut self, fn_name: &str) -> Result<Option<(String, String)>, EvalError> {
+        if let Some(b) = self.names.get(fn_name) {
+            return Ok(b.clone());
         }
-        let h = self
+        let b = self
             .eng
             .store
-            .resolve_name(fn_name, &self.asof)
-            .map_err(|e| EvalError::Store(StoreError::new("resolve_name", e)))?;
-        self.names.insert(fn_name.to_string(), h.clone());
-        Ok(h)
+            .resolve_binding(fn_name, &self.asof)
+            .map_err(|e| EvalError::Store(StoreError::new("resolve_binding", e)))?
+            .map(|b| (b.fn_hash, b.tx));
+        self.names.insert(fn_name.to_string(), b.clone());
+        Ok(b)
+    }
+
+    /// The function hash `fn_name` resolves to as of the request's asof.
+    fn resolve(&mut self, fn_name: &str) -> Result<Option<String>, EvalError> {
+        Ok(self.binding(fn_name)?.map(|(h, _)| h))
     }
 
     /// A cell's answer if it can be had without evaluating a function.
@@ -502,9 +509,10 @@ impl<'e> Req<'e> {
         // Each input's answer holds from its `lo` on (its receipt's asof, or later when the
         // answer is a version validated or kept across a change of its own inputs: its value
         // was not established in between). The latest of these, not of the receipts' asofs,
-        // is where this value is known: SPEC 8.2 rule 2 when no input was kept.
+        // is where this value is known: SPEC 8.2 rule 2 when no input was kept; and not before
+        // any name binding it relied on began.
         let latest = read.values().map(|a| a.lo.as_str()).max().unwrap_or(MIN_INSTANT).to_string();
-        let asof = self.knowable_asof(latest, &names).map_err(|e| engine_error(e, &f.id))?;
+        let asof = self.binding_asof(latest, &names).map_err(|e| engine_error(e, &f.id))?;
         let lo = read
             .values()
             .map(|a| a.lo.as_str())

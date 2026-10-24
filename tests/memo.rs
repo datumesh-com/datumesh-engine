@@ -200,3 +200,34 @@ fn without_a_memo_every_request_validates_through_the_store() {
     assert_eq!(w.calls(TOTAL), 1);
     assert_eq!(e.memo_stats().entries, 0);
 }
+
+#[test]
+fn an_input_name_bound_after_the_inputs_asof_makes_the_receipt_answer_from_the_request() {
+    // late(x) has a version recorded on the 15th, but its name is bound only on the 18th:
+    // as of the 15th, reading "rates.example.org/late" finds nothing, so a receipt reading it
+    // cannot answer as of the 15th (it would not recompute there).
+    let mut w = World::new();
+    const LATE: &str = "rates.example.org/late";
+    let h = w.store.put_descriptor(&descriptor("stored", "", &[], &[])).unwrap();
+    let cell = datumesh_core::Cell { ns: RATES.into(), fn_name: "late".into(), fn_hash: h.clone(), args: args(&[]) };
+    let bytes = w.sign_stored(&cell, num("5"), &t(15, 0), &t(15, 0));
+    let rh = w.store.put_receipt(&bytes).unwrap();
+    w.store.put_version(&cell.id(), &t(15, 0), &rh).unwrap();
+    w.store.bind_name(LATE, &h, &t(18, 0)).unwrap();
+    w.native_fn("calc.example.net/double", &[LATE], &[], |_, i, _| {
+        let v = i.read(LATE, &args(&[]))?;
+        Ok(add(&v, &v))
+    });
+    let e = w.engine();
+    let r = w.cellref("calc.example.net/double", &[]);
+    let a = receipt_of(&e.get(&r, Some(&t(20, 0))).unwrap());
+    assert_eq!(a.value(), &num("10"));
+    assert_eq!(a.tx(), t(15, 0), "tx is still the latest input tx");
+    assert_eq!(a.asof(), t(20, 0), "asof: the request's, at which the name is known");
+    // Later asofs reuse it; before the binding there is no value.
+    assert_eq!(receipt_of(&w.engine().get(&r, Some(&t(25, 0))).unwrap()).hash(), a.hash());
+    assert_eq!(e.get(&r, Some(&t(17, 0))).unwrap(), Answer::NotCovered);
+    assert!(matches!(e.get(&r, Some(&t(17, 0))), Ok(Answer::NotCovered)));
+    assert_eq!(w.calls("calc.example.net/double"), 1);
+    w.verify_all_issued(&e, "memo_late_binding");
+}

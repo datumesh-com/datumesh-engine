@@ -54,3 +54,7 @@ required-features = ["native-test"]
 [[test]]
 name = "early_cutoff"
 required-features = ["native-test"]
+
+[[test]]
+name = "recursion"
+required-features = ["native-test"]

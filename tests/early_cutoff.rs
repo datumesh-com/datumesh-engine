@@ -89,8 +89,9 @@ fn a_backdated_correction_is_answered_and_its_receipt_reused() {
     assert_eq!((new.tx(), new.asof()), (old.tx(), old.asof()));
     assert_eq!(w.db().count("computed_versions"), 1, "the store keeps the old version");
     let receipts = w.db().count("receipts");
-    // A fresh engine finds the receipt already signed for these inputs instead of signing
-    // another.
+    // A fresh engine, later (a new signature would have another issued, so another hash),
+    // finds the receipt already signed for these inputs instead of signing another.
+    w.clock.set("2026-02-01T00:00:00.000000Z");
     w.reset_calls();
     assert_eq!(receipt_of(&w.engine().get(&p, Some(&t(11, 0))).unwrap()).hash(), new.hash());
     assert_eq!(w.db().count("receipts"), receipts);

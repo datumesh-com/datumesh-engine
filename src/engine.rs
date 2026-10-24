@@ -297,22 +297,59 @@ impl Engine {
             return Ok(Answer::NotCovered);
         };
         check_args(cell, &desc).map_err(EngineError::Invalid)?;
+        let id = cell.id();
+        let store_err = |e: EvalError| match e {
+            EvalError::Store(e) => EngineError::Store(e),
+            other => EngineError::Runtime { cell_id: id.clone(), message: other.to_string() },
+        };
+        // From the memo, without waiting for the evaluator.
+        if let Some(ans) = Req::new(self, a, now).memo_hit(&id).map_err(store_err)? {
+            return Ok(Answer::Receipt(ans.bytes.to_vec()));
+        }
         let done = if desc.lang == STORED {
-            Req::new(self, a, now).stored(cell, &cell.id()).map_err(|e| match e {
-                EvalError::Store(e) => EngineError::Store(e),
-                other => EngineError::Runtime { cell_id: cell.id(), message: other.to_string() },
-            })?
+            let start = self.memo.begin();
+            let mut req = Req::new(self, a, now);
+            match req.stored(cell, &id) {
+                Ok(d) => {
+                    self.memo.end(start, &req.learned);
+                    d
+                }
+                Err(e) => {
+                    self.memo.abort(start);
+                    return Err(store_err(e));
+                }
+            }
         } else {
             let _single = self.evaluator.lock().unwrap_or_else(|p| p.into_inner());
-            let mut req = Req::new(self, a, now);
-            let done = req.run(cell.clone(), desc, false)?;
-            req.flush()?;
-            done
+            self.evaluate_cell(cell, desc, a, now, false)?
         };
         Ok(match done {
             Done::Value(ans) => Answer::Receipt(ans.bytes.to_vec()),
             Done::NotCovered | Done::Unsigned(_) => Answer::NotCovered,
         })
+    }
+
+    /// Evaluates a computed cell in a request of its own (the caller holds the evaluator):
+    /// memo first, then the store's version validated, else the function; writes what is new
+    /// and keeps the answers in the memo.
+    fn evaluate_cell(&self, cell: &Cell, desc: Arc<Descriptor>, a: &str, now: &str, unsigned: bool) -> Result<Done, EngineError> {
+        let start = self.memo.begin();
+        let mut req = Req::new(self, a, now);
+        let result = (|| {
+            if !unsigned {
+                if let Some(ans) = req.memo_hit(&cell.id()).map_err(|e| crate::eval::engine_error(e, &cell.id()))? {
+                    return Ok(Done::Value(ans));
+                }
+            }
+            let done = req.run(cell.clone(), desc, unsigned)?;
+            req.flush()?;
+            Ok(done)
+        })();
+        match &result {
+            Ok(_) => self.memo.end(start, &req.learned),
+            Err(_) => self.memo.abort(start),
+        }
+        result
     }
 
     /// A receipt the store returned, parsed (cached by hash).
@@ -343,10 +380,7 @@ impl Engine {
             })?
         } else {
             let _single = self.evaluator.lock().unwrap_or_else(|p| p.into_inner());
-            let mut req = Req::new(self, asof, &now);
-            let done = req.run(cell.clone(), desc, true)?;
-            req.flush()?;
-            done
+            self.evaluate_cell(cell, desc, asof, &now, true)?
         };
         Ok(match done {
             Done::Value(ans) => Some(ans.value.clone()),
@@ -369,15 +403,17 @@ impl Engine {
     /// Tells the engine that a stored version of `cell_id` was added: the memoised answers
     /// that depend on the cell are dropped.
     pub fn stored_version_added(&self, cell_id: &str) {
-        let _ = cell_id;
+        self.memo.invalidate(cell_id);
     }
 
     /// Drops every memoised answer.
-    pub fn clear_memo(&self) {}
+    pub fn clear_memo(&self) {
+        self.memo.clear();
+    }
 
     /// Sizes of the memo and of the dirty set.
     pub fn memo_stats(&self) -> MemoStats {
-        MemoStats::default()
+        self.memo.stats()
     }
 }
 

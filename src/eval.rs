@@ -42,8 +42,33 @@ pub(crate) struct Ans {
     /// Every function name the answer depends on (the cell's inputs, transitively), with the
     /// function hash it resolved to.
     pub(crate) names: Arc<BTreeMap<String, String>>,
-    /// The cells read (direct inputs).
-    pub(crate) deps: Vec<String>,
+    /// The cell.
+    pub(crate) cell: Cell,
+    /// The answers this one rests on: the inputs read, with the receipt and value each gave
+    /// (for a version kept or validated across a change, the inputs as of then, not its
+    /// receipt's).
+    pub(crate) inputs: Vec<Use>,
+}
+
+/// An input an answer rests on.
+#[derive(Debug)]
+pub(crate) struct Use {
+    pub(crate) id: String,
+    pub(crate) cell: Cell,
+    pub(crate) hash: String,
+    pub(crate) value: Scalar,
+}
+
+impl Ans {
+    /// The ids of the cells read.
+    pub(crate) fn deps(&self) -> impl Iterator<Item = &String> {
+        self.inputs.iter().map(|u| &u.id)
+    }
+}
+
+/// The inputs of answers read.
+fn uses<'a>(read: impl Iterator<Item = &'a Arc<Ans>>) -> Vec<Use> {
+    read.map(|a| Use { id: a.id.clone(), cell: a.cell.clone(), hash: a.hash.clone(), value: a.value.clone() }).collect()
 }
 
 /// How a cell ended in a request.
@@ -71,8 +96,13 @@ struct Fresh {
 }
 
 enum State {
-    /// Not looked at yet: find the store's computed version answering as of the asof.
+    /// Not looked at yet: an answer the memo dropped (a stored version it rested on changed)
+    /// is rechecked first; else the store's computed version answering as of the asof.
     Start,
+    /// Rechecking a dropped answer: inputs before `idx` gave the same receipt or value.
+    Recheck { ans: Arc<Ans>, idx: usize, read: Vec<Arc<Ans>>, names: BTreeMap<String, String> },
+    /// The store's computed version answering as of the asof, to validate; else evaluate.
+    FromStore,
     /// Validating that version: inputs before `idx` gave the same receipt or value.
     Validate { cand: Arc<Parsed>, idx: usize, read: Vec<Arc<Ans>>, names: BTreeMap<String, String> },
     /// Evaluating the function; `cand` is the version that did not validate, if any.
@@ -183,7 +213,7 @@ impl<'e> Req<'e> {
     }
 
     /// A stored cell's answer: the version answering as of the asof.
-    pub(crate) fn stored(&mut self, _cell: &Cell, id: &str) -> Result<Done, EvalError> {
+    pub(crate) fn stored(&mut self, cell: &Cell, id: &str) -> Result<Done, EvalError> {
         let found = self
             .eng
             .store
@@ -214,7 +244,8 @@ impl<'e> Req<'e> {
             lo: r.asof().to_string(),
             hi,
             names: Arc::new(BTreeMap::new()),
-            deps: Vec::new(),
+            cell: cell.clone(),
+            inputs: Vec::new(),
         });
         self.learned.push(a.clone());
         Ok(Done::Value(a))
@@ -228,19 +259,22 @@ impl<'e> Req<'e> {
         let mut on_stack: HashSet<String> = HashSet::from([id.clone()]);
         while let Some(top) = stack.last_mut() {
             let step = match top.state {
-                State::Start => self.start_frame(top)?,
+                State::Start => self.start_frame(top),
+                State::Recheck { .. } => self.recheck_frame(top)?,
+                State::FromStore => self.store_frame(top)?,
                 State::Validate { .. } => self.validate_frame(top)?,
                 State::Eval { .. } => self.eval_frame(top)?,
             };
             match step {
                 Step::Again => {}
                 Step::Done(d) => {
-                    let f = stack.pop().expect("a frame");
-                    on_stack.remove(&f.id);
-                    if let Done::Value(a) = &d {
-                        self.learned.push(a.clone());
+                    if let Some(f) = stack.pop() {
+                        on_stack.remove(&f.id);
+                        if let Done::Value(a) = &d {
+                            self.learned.push(a.clone());
+                        }
+                        self.done.insert(f.id, d);
                     }
-                    self.done.insert(f.id, d);
                 }
                 Step::Push(cell, id, desc) => {
                     if !on_stack.insert(id.clone()) {
@@ -256,8 +290,53 @@ impl<'e> Req<'e> {
         self.done.get(&id).cloned().ok_or_else(|| EngineError::Runtime { cell_id: id, message: "no answer".into() })
     }
 
+    /// A dropped answer to recheck, if the memo has one holding at the asof.
+    fn start_frame(&mut self, f: &mut Frame) -> Step {
+        f.state = match self.eng.memo.stale(&f.id, &self.asof) {
+            Some(ans) => State::Recheck { ans, idx: 0, read: Vec::new(), names: BTreeMap::new() },
+            None => State::FromStore,
+        };
+        Step::Again
+    }
+
+    /// Rechecks a dropped answer as a version is validated (same receipt or value from each
+    /// input it rested on, names resolving the same), from memory: no store query unless an
+    /// input needs one. Differing: the store's version is looked at as usual.
+    fn recheck_frame(&mut self, f: &mut Frame) -> Result<Step, EngineError> {
+        let State::Recheck { ans, idx, read, names } = &mut f.state else { return Ok(Step::Again) };
+        let ans = ans.clone();
+        while let Some(u) = ans.inputs.get(*idx) {
+            match self.check_use(&u.cell, &u.id, &u.hash, &u.value)? {
+                Check::Same(a, name, hash) => {
+                    read.push(a);
+                    names.insert(name, hash);
+                    *idx += 1;
+                }
+                Check::Pending(cell, id, desc) => return Ok(Step::Push(cell, id, desc)),
+                Check::Differs => {
+                    f.state = State::FromStore;
+                    return Ok(Step::Again);
+                }
+            }
+        }
+        let lo = read.iter().map(|a| a.lo.as_str()).chain(std::iter::once(ans.asof.as_str())).max().unwrap_or(MIN_INSTANT);
+        Ok(Step::Done(Done::Value(Arc::new(Ans {
+            id: f.id.clone(),
+            hash: ans.hash.clone(),
+            bytes: ans.bytes.clone(),
+            value: ans.value.clone(),
+            tx: ans.tx.clone(),
+            asof: ans.asof.clone(),
+            lo: lo.to_string(),
+            hi: read.iter().filter_map(|a| a.hi.clone()).min(),
+            names: merge_names(read.iter(), std::mem::take(names)),
+            cell: f.cell.clone(),
+            inputs: uses(read.iter()),
+        }))))
+    }
+
     /// The store's computed version answering as of the asof, to validate; else evaluate.
-    fn start_frame(&mut self, f: &mut Frame) -> Result<Step, EngineError> {
+    fn store_frame(&mut self, f: &mut Frame) -> Result<Step, EngineError> {
         let found = self
             .eng
             .store
@@ -305,7 +384,8 @@ impl<'e> Req<'e> {
             lo: lo.to_string(),
             hi: read.iter().filter_map(|a| a.hi.clone()).min(),
             names: merge_names(read.iter(), std::mem::take(names)),
-            deps: read.iter().map(|a| a.id.clone()).collect(),
+            cell: f.cell.clone(),
+            inputs: uses(read.iter()),
         });
         Ok(Step::Done(Done::Value(ans)))
     }
@@ -314,19 +394,22 @@ impl<'e> Req<'e> {
     fn check_input(&mut self, h: &str) -> Result<Check, EngineError> {
         let Some(input) = self.receipt(h)? else { return Ok(Check::Differs) };
         let r = &input.receipt;
-        let name = r.cell().function_name();
-        if self.resolve(&name).map_err(|e| engine_error(e, &r.cell().id()))?.as_deref() != Some(r.cell().fn_hash.as_str()) {
+        self.check_use(r.cell(), &r.cell().id(), h, r.value())
+    }
+
+    /// Whether `cell`, its name resolving to its function as of the asof, gives receipt `h`
+    /// or value `value` as of the asof.
+    fn check_use(&mut self, cell: &Cell, id: &str, h: &str, value: &Scalar) -> Result<Check, EngineError> {
+        let name = cell.function_name();
+        if self.resolve(&name).map_err(|e| engine_error(e, id))?.as_deref() != Some(cell.fn_hash.as_str()) {
             return Ok(Check::Differs);
         }
-        self.budget.charge_shared(1).map_err(|e| engine_error(e, &r.cell().id()))?;
-        let Some(desc) = self.eng.descriptor_of(&r.cell().fn_hash)? else { return Ok(Check::Differs) };
-        let id = r.cell().id();
-        match self.lookup(r.cell(), &id, desc).map_err(|e| engine_error(e, &id))? {
-            Lookup::Ready(Done::Value(a)) if a.hash == h || &a.value == r.value() => {
-                Ok(Check::Same(a, name, r.cell().fn_hash.clone()))
-            }
+        self.budget.charge_shared(1).map_err(|e| engine_error(e, id))?;
+        let Some(desc) = self.eng.descriptor_of(&cell.fn_hash)? else { return Ok(Check::Differs) };
+        match self.lookup(cell, id, desc).map_err(|e| engine_error(e, id))? {
+            Lookup::Ready(Done::Value(a)) if a.hash == h || &a.value == value => Ok(Check::Same(a, name, cell.fn_hash.clone())),
             Lookup::Ready(_) => Ok(Check::Differs),
-            Lookup::Eval(desc) => Ok(Check::Pending(r.cell().clone(), id, desc)),
+            Lookup::Eval(desc) => Ok(Check::Pending(cell.clone(), id.to_string(), desc)),
         }
     }
 
@@ -421,7 +504,7 @@ impl<'e> Req<'e> {
         let asof = self.knowable_asof(latest, &names).map_err(|e| engine_error(e, &f.id))?;
         let lo = read.values().map(|a| a.lo.as_str()).chain(std::iter::once(asof.as_str())).max().unwrap_or(MIN_INSTANT).to_string();
         let hi = read.values().filter_map(|a| a.hi.clone()).min();
-        let deps: Vec<String> = read.values().map(|a| a.id.clone()).collect();
+        let inputs = uses(read.values());
         let existing = match &cand {
             Some(c) if c.receipt.value() == &value => Some(c.clone()),
             // The new version would share the old one's (tx, asof), which the store's key holds
@@ -442,7 +525,8 @@ impl<'e> Req<'e> {
                 lo: lo.as_str().max(r.asof()).to_string(),
                 hi,
                 names,
-                deps,
+                cell: f.cell.clone(),
+                inputs,
             }));
         }
         let summary = match &self.eng.summary {
@@ -476,7 +560,8 @@ impl<'e> Req<'e> {
             lo,
             hi,
             names,
-            deps,
+            cell: f.cell.clone(),
+            inputs,
         }))
     }
 

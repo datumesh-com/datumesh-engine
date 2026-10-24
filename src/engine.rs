@@ -240,6 +240,9 @@ pub struct MemoStats {
     pub dependent_edges: usize,
     /// Cells marked dirty and kept to refuse answers of evaluations already running.
     pub dirty: usize,
+    /// Answers dropped because a stored version they rested on changed, kept to be rechecked
+    /// from memory (early cutoff without store queries for the unchanged part of a graph).
+    pub stale: usize,
     /// An estimate of the bytes these take.
     pub approx_bytes: usize,
 }

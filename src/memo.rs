@@ -35,6 +35,10 @@ struct State {
     rev: u64,
     entries: HashMap<String, Vec<Arc<Ans>>>,
     count: usize,
+    /// Answers dropped by an invalidation, kept as candidates to recheck (from memory) before
+    /// the store's version is looked at.
+    stale: HashMap<String, Vec<Arc<Ans>>>,
+    stale_count: usize,
     /// Input cell id to the cells whose answers read it.
     readers: HashMap<String, HashSet<String>>,
     edges: usize,
@@ -70,6 +74,19 @@ impl Memo {
             .cloned()
     }
 
+    /// A dropped answer for `cell_id` that held at `asof` before it was dropped.
+    pub(crate) fn stale(&self, cell_id: &str, asof: &str) -> Option<Arc<Ans>> {
+        if !self.enabled() {
+            return None;
+        }
+        let s = self.lock();
+        s.stale
+            .get(cell_id)?
+            .iter()
+            .find(|a| a.lo.as_str() <= asof && a.hi.as_deref().is_none_or(|h| asof < h))
+            .cloned()
+    }
+
     /// Registers an evaluation; returns the revision it began at.
     pub(crate) fn begin(&self) -> u64 {
         let mut s = self.lock();
@@ -84,7 +101,7 @@ impl Memo {
         let mut s = self.lock();
         if self.enabled() {
             for a in answers {
-                let mark = std::iter::once(&a.id).chain(a.deps.iter()).filter_map(|c| s.dirty.get(c)).max().copied();
+                let mark = std::iter::once(&a.id).chain(a.deps()).filter_map(|c| s.dirty.get(c)).max().copied();
                 if let Some(m) = mark.filter(|m| *m > start) {
                     let d = s.dirty.entry(a.id.clone()).or_default();
                     *d = (*d).max(m);
@@ -119,6 +136,8 @@ impl Memo {
             }
             if let Some(list) = s.entries.remove(&c) {
                 s.count -= list.len();
+                s.stale_count += list.len();
+                s.stale.entry(c.clone()).or_default().extend(list);
             }
             if let Some(readers) = s.readers.remove(&c) {
                 s.edges -= readers.len();
@@ -133,7 +152,9 @@ impl Memo {
         s.rev += 1;
         s.entries.clear();
         s.readers.clear();
+        s.stale.clear();
         s.count = 0;
+        s.stale_count = 0;
         s.edges = 0;
     }
 
@@ -151,7 +172,7 @@ impl Memo {
                     + a.asof.len()
                     + a.lo.len()
                     + a.hi.as_ref().map_or(0, String::len)
-                    + a.deps.iter().map(|d| d.len() + 24).sum::<usize>()
+                    + a.inputs.iter().map(|u| u.id.len() + u.hash.len() + std::mem::size_of_val(u) + 160).sum::<usize>()
                     + a.names.iter().map(|(k, v)| k.len() + v.len() + 64).sum::<usize>() / Arc::strong_count(&a.names).max(1);
             }
         }
@@ -159,7 +180,9 @@ impl Memo {
             bytes += k.len() + 48 + set.iter().map(|c| c.len() + 32).sum::<usize>();
         }
         bytes += s.dirty.keys().map(|k| k.len() + 40).sum::<usize>();
+        bytes += s.stale.values().flatten().map(|a| a.bytes.len() + 400).sum::<usize>();
         MemoStats {
+            stale: s.stale_count,
             entries: s.count,
             cells: s.entries.len(),
             dependent_edges: s.edges,
@@ -176,13 +199,18 @@ impl State {
                 return;
             }
         }
-        if self.count >= capacity {
+        if let Some(old) = self.stale.remove(&a.id) {
+            self.stale_count -= old.len();
+        }
+        if self.count + self.stale_count >= capacity {
             self.entries.clear();
             self.readers.clear();
+            self.stale.clear();
             self.count = 0;
+            self.stale_count = 0;
             self.edges = 0;
         }
-        for d in &a.deps {
+        for d in a.deps() {
             if self.readers.entry(d.clone()).or_default().insert(a.id.clone()) {
                 self.edges += 1;
             }

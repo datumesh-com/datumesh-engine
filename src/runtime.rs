@@ -48,9 +48,9 @@ pub trait Inputs {
     ///
     /// [`EvalError::Suspended`]: the input is a computed cell not evaluated yet; return it
     /// (with `?`): the engine evaluates the input and calls the runtime again.
-    /// [`EvalError::InputNotCovered`]: the input has no value as of the asof; a runtime may
-    /// handle it (a default, a fallback), or propagate it, and then the cell has no value
-    /// either.
+    /// [`EvalError::InputNotCovered`]: the input has no value as of the asof, so neither has
+    /// the cell being evaluated, whatever the runtime returns next (a receipt cannot list an
+    /// absence among its inputs).
     ///
     /// The asof itself is deliberately not offered: a value may depend on time only through
     /// the inputs it reads, which is what makes memoised versions checkable.

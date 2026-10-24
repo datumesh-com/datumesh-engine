@@ -61,10 +61,8 @@ impl std::error::Error for StoreError {
 /// and [`Budget::charge`](crate::Budget::charge), and by a [`Runtime`](crate::Runtime).
 ///
 /// A runtime propagates every error it gets from `Inputs::read` or `Budget::charge`
-/// unchanged (with `?`). It may handle [`EvalError::InputNotCovered`] itself (an input with no
-/// value as of the evaluation's asof); the engine does not depend on the others being
-/// propagated: it records them when they happen and ignores what the runtime returns after
-/// them.
+/// unchanged (with `?`). The engine does not depend on it: it records each such error when it
+/// happens, and what the runtime returns after it is ignored.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub enum EvalError {
@@ -109,9 +107,11 @@ pub enum EvalError {
     /// list: it is how evaluation suspends without native recursion.
     Suspended,
     /// The input has no value as of the evaluation's asof (a stored cell with no version
-    /// answering then, or a computed cell one of whose inputs has none). Added to the brief's
-    /// list: a runtime may handle it; propagated, the cell has no value either
-    /// ([`Answer::NotCovered`](crate::Answer::NotCovered)).
+    /// answering then, or a computed cell one of whose inputs has none). The reading cell has
+    /// no value either ([`Answer::NotCovered`](crate::Answer::NotCovered)), even if the
+    /// runtime catches it: a receipt lists the inputs read, and cannot list an absence, so a
+    /// value computed from one could be neither checked against its inputs nor recomputed.
+    /// Added to the brief's list.
     InputNotCovered {
         /// The input cell's id.
         cell_id: String,

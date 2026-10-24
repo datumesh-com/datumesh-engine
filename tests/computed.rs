@@ -66,9 +66,11 @@ fn a_computed_receipt_has_real_lineage_and_recomputes_through_the_engine() {
 }
 
 #[test]
-fn not_covered_inputs_propagate_unless_the_runtime_handles_them() {
+fn an_input_with_no_value_leaves_the_cell_without_one_even_if_the_runtime_catches_it() {
     let mut w = world();
-    // fallback(item) = price(item), or 0 when it has no value.
+    // fallback(item) = price(item), or 0 when it has no value: a receipt cannot list the
+    // absence of an input, so such a value could not be checked or recomputed; the engine
+    // answers NotCovered whatever the runtime returns after the read.
     w.native_fn("calc.example.net/fallback", &[PRICE], &[("item", r#"{"type":"string","valid":false}"#)], |c, i, _| {
         match i.read(PRICE, &args(&[("item", c.args["item"].scalar().unwrap().clone())])) {
             Ok(v) => Ok(v),
@@ -76,16 +78,21 @@ fn not_covered_inputs_propagate_unless_the_runtime_handles_them() {
             Err(e) => Err(e),
         }
     });
+    w.native_fn("calc.example.net/constant", &[], &[], |_, _, _| Ok(num("42")));
     let e = w.engine();
     let fx = w.cell(FX, &[("quote", text("USD"))]);
     w.publish(&fx, "3", &t(15, 16));
     // price(bolt) has no version: total has no value either.
     let total = w.cellref(TOTAL, &[("item", text("bolt"))]);
     assert_eq!(e.get(&total, Some(&t(20, 0))).unwrap(), Answer::NotCovered);
-    let fb = receipt_of(&e.get(&w.cellref("calc.example.net/fallback", &[("item", text("bolt"))]), Some(&t(20, 0))).unwrap());
-    assert_eq!(fb.value(), &num("0"));
-    assert!(fb.inputs().is_empty());
-    assert_eq!((fb.tx(), fb.asof()), (MIN_INSTANT, MIN_INSTANT), "no inputs: the earliest instant");
+    let fallback = w.cellref("calc.example.net/fallback", &[("item", text("bolt"))]);
+    assert_eq!(e.get(&fallback, Some(&t(20, 0))).unwrap(), Answer::NotCovered);
+    assert_eq!(w.db().count("computed_versions"), 0);
+    // A function with no inputs: tx and asof are the earliest instant.
+    let c = receipt_of(&e.get(&w.cellref("calc.example.net/constant", &[]), Some(&t(20, 0))).unwrap());
+    assert_eq!(c.value(), &num("42"));
+    assert!(c.inputs().is_empty());
+    assert_eq!((c.tx(), c.asof()), (MIN_INSTANT, MIN_INSTANT), "no inputs: the earliest instant");
     assert_eq!(w.db().count("computed_versions"), 1);
     w.verify_all_issued(&e, "computed_not_covered");
 }

@@ -12,10 +12,12 @@ mod check;
 mod clock;
 mod engine;
 mod error;
+mod eval;
 mod memo;
 #[cfg(feature = "native-test")]
 pub mod native_test;
 mod runtime;
+mod sign;
 
 pub use clock::{Clock, SystemClock};
 pub use engine::{

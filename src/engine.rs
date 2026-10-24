@@ -10,9 +10,10 @@ use datumesh_core::{lexical, Cell, CellRef, Descriptor, KeyDoc, Resolver, Scalar
 use datumesh_store::Store;
 
 use crate::cache::{Cache, Parsed};
+use crate::eval::{is_instant, parse_stored, Done, Req};
 use crate::check::{check_args, check_no_slice};
 use crate::clock::{Clock, SystemClock};
-use crate::error::{ConfigError, EngineError, StoreError};
+use crate::error::{ConfigError, EngineError, EvalError, StoreError};
 use crate::memo::Memo;
 use crate::runtime::Runtime;
 
@@ -296,14 +297,62 @@ impl Engine {
             return Ok(Answer::NotCovered);
         };
         check_args(cell, &desc).map_err(EngineError::Invalid)?;
-        let _ = now;
-        if desc.lang == STORED {
-            return match self.store.stored_asof_with_receipt(&cell.id(), a).map_err(|e| StoreError::new("stored_asof", e))? {
-                Some((_, bytes)) => Ok(Answer::Receipt(bytes.into_owned())),
-                None => Ok(Answer::NotCovered),
-            };
+        let done = if desc.lang == STORED {
+            Req::new(self, a, now).stored(cell, &cell.id()).map_err(|e| match e {
+                EvalError::Store(e) => EngineError::Store(e),
+                other => EngineError::Runtime { cell_id: cell.id(), message: other.to_string() },
+            })?
+        } else {
+            let _single = self.evaluator.lock().unwrap_or_else(|p| p.into_inner());
+            let mut req = Req::new(self, a, now);
+            let done = req.run(cell.clone(), desc, false)?;
+            req.flush()?;
+            done
+        };
+        Ok(match done {
+            Done::Value(ans) => Answer::Receipt(ans.bytes.to_vec()),
+            Done::NotCovered | Done::Unsigned(_) => Answer::NotCovered,
+        })
+    }
+
+    /// A receipt the store returned, parsed (cached by hash).
+    pub(crate) fn parsed(&self, hash: &str, bytes: &[u8]) -> Result<Arc<Parsed>, StoreError> {
+        if let Some(p) = self.receipts.get(hash) {
+            return Ok(p);
         }
-        Err(EngineError::NoRuntime { lang: desc.lang.clone(), fn_hash: cell.fn_hash.clone() })
+        let p = Arc::new(parse_stored(hash, bytes)?);
+        self.receipts.insert(hash.to_string(), p.clone());
+        Ok(p)
+    }
+
+    /// The value of `cell` as of `asof`, evaluated (a computed cell's function is run, not
+    /// looked up); for `Resolver::evaluate`.
+    fn evaluate_value(&self, cell: &Cell, asof: &str) -> Result<Option<Scalar>, EngineError> {
+        if !is_instant(asof) || cell.is_slice() {
+            return Ok(None);
+        }
+        let Some(desc) = self.descriptor_of(&cell.fn_hash)? else { return Ok(None) };
+        if check_args(cell, &desc).is_err() {
+            return Ok(None);
+        }
+        let now = self.clock.now();
+        let done = if desc.lang == STORED {
+            Req::new(self, asof, &now).stored(cell, &cell.id()).map_err(|e| EngineError::Runtime {
+                cell_id: cell.id(),
+                message: e.to_string(),
+            })?
+        } else {
+            let _single = self.evaluator.lock().unwrap_or_else(|p| p.into_inner());
+            let mut req = Req::new(self, asof, &now);
+            let done = req.run(cell.clone(), desc, true)?;
+            req.flush()?;
+            done
+        };
+        Ok(match done {
+            Done::Value(ans) => Some(ans.value.clone()),
+            Done::Unsigned(v) => Some(v),
+            Done::NotCovered => None,
+        })
     }
 
     /// The parsed descriptor of `fn_hash`, cached.
@@ -341,7 +390,18 @@ impl Resolver for Engine {
         self.store.receipt(hash)
     }
 
-    fn evaluate(&self, _cell: &Cell, _asof: &str) -> Option<Scalar> {
-        None
+    /// The value of `cell` as of `asof` by the engine's answering rule (a receipt answers at
+    /// A when its tx and its asof are both at or before A): a stored cell's is looked up; a
+    /// computed cell's function is evaluated (its inputs answered as for `get`, and stored
+    /// when new), never read back from its own receipts. `None` when there is none or the
+    /// evaluation fails (logged with `tracing`, target `datumesh_engine`).
+    fn evaluate(&self, cell: &Cell, asof: &str) -> Option<Scalar> {
+        match self.evaluate_value(cell, asof) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::debug!(target: "datumesh_engine", cell_id = %cell.id(), asof, error = %e, "evaluate failed");
+                None
+            }
+        }
     }
 }

@@ -1,18 +1,16 @@
-//! Resolver conformance: the core's test kit with `Engine` as a time-aware resolver.
-//!
-//! One check of the kit differs by design: the kit's time-aware rule is the store's tx-only
-//! `version_asof` ("the latest version with tx <= asof"), while the engine answers with a
-//! receipt only when its tx **and** its asof are at or before A (the user's decision). The
-//! kit's EUR/CHF timeline has a late-signed first version (tx 2024-03-15T16:00, asof
-//! 2024-03-16T09:00), and asks for its value as of its tx: the engine answers None there, as
-//! it must. Every other check passes; the test pins that exact difference.
+//! Resolver conformance: the core's test kit with `Engine` as a time-aware resolver, under
+//! the kit's default answering rule `AnswerRule::TxAndAsof` (datumesh-core 0.3.3): a version
+//! answers as of A only when its tx and its receipt's asof are both at or before A, the
+//! engine's rule. Every check passes. Under the tx-only rule (`AnswerRule::TxOnly`) the kit
+//! differs at the late-signed first version of its EUR/CHF timeline, as of its tx, where the
+//! engine answers None, as it must.
 
 mod common;
 
 use std::sync::Arc;
 
 use common::*;
-use datumesh_core::testkit::{Fixtures, Kit};
+use datumesh_core::testkit::{AnswerRule, Fixtures, Kit};
 use datumesh_core::{verify, Level, Receipt, Resolver};
 use datumesh_engine::Engine;
 use datumesh_store::{PgStore, Store};
@@ -37,16 +35,25 @@ fn load(db: &TestDb, fx: &Fixtures) -> Engine {
 }
 
 #[test]
-fn the_testkit_passes_with_the_engine_except_the_answering_rule_at_a_late_signed_tx() {
+fn the_testkit_passes_with_the_engine() {
     let db = TestDb::migrated();
     let kit = Kit::new().time_aware(true);
     let engine = load(&db, kit.fixtures());
-    kit.check_lazy_calls(&engine).unwrap();
-    kit.check_unavailable(&engine).unwrap();
-    kit.check_bytes(&engine).unwrap();
-    // Not time-aware in the kit's sense: everything else of check_asof passes.
-    Kit::new().check_asof(&engine).unwrap();
-    let report = kit.check_asof(&engine).expect_err("the kit's tx-only rule differs at one point");
+    kit.check(&engine).unwrap();
+    // Each check by itself, with the rule named (the default is TxAndAsof).
+    let explicit = Kit::new().answer_rule(AnswerRule::TxAndAsof).time_aware(true);
+    explicit.check_lazy_calls(&engine).unwrap();
+    explicit.check_unavailable(&engine).unwrap();
+    explicit.check_bytes(&engine).unwrap();
+    explicit.check_asof(&engine).unwrap();
+}
+
+#[test]
+fn under_the_tx_only_rule_the_kit_differs_at_a_late_signed_tx() {
+    let db = TestDb::migrated();
+    let kit = Kit::new().answer_rule(AnswerRule::TxOnly).time_aware(true);
+    let engine = load(&db, kit.fixtures());
+    let report = kit.check_asof(&engine).expect_err("the tx-only rule answers at the late-signed tx");
     assert_eq!(
         report.failures(),
         ["asof: timeline: evaluate as of 2024-03-15T16:00:00.000000Z gave None, want Some(Number(\"0.9581\"))"],
@@ -84,12 +91,15 @@ fn the_engine_recomputes_the_kits_stored_receipts_at_their_asof() {
 }
 
 #[test]
-fn a_store_is_not_the_engine_resolver() {
-    // The store's own Resolver::evaluate is tx-only (version_asof): it answers at the
-    // late-signed tx where the engine does not.
+fn the_store_and_the_engine_answer_alike() {
+    // Since datumesh-store 0.3.0 the store's own Resolver::evaluate answers with tx and asof
+    // too: both pass the kit under TxAndAsof, and both differ from TxOnly at the same point.
     let db = TestDb::migrated();
     let kit = Kit::new().time_aware(true);
-    let _engine = load(&db, kit.fixtures());
+    let engine = load(&db, kit.fixtures());
     let store: PgStore = db.store();
-    assert!(kit.check_asof(&store).is_ok());
+    kit.check_asof(&store).unwrap();
+    let tx_only = Kit::new().answer_rule(AnswerRule::TxOnly).time_aware(true);
+    let (s, e) = (tx_only.check_asof(&store).unwrap_err(), tx_only.check_asof(&engine).unwrap_err());
+    assert_eq!(s.failures(), e.failures());
 }

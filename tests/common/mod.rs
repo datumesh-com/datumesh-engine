@@ -3,11 +3,12 @@
 //! Every test gets a PostgreSQL database of its own, created from `DATABASE_URL` (a role
 //! allowed to create databases) and dropped afterwards. A [`World`] holds the store, the key
 //! documents of two publishers and of the mesh, a clock the test moves, and the functions it
-//! defines; it builds engines on them.
+//! defines; it builds engines on them. Every test runs on `PgStore` (since datumesh-store
+//! 0.3.0 `Store` is sealed: no other store can be written); [`wire::Wire`] counts the
+//! statements a store runs.
 #![allow(dead_code)]
 
-pub mod counting;
-pub mod mem;
+pub mod wire;
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -199,9 +200,9 @@ pub type NativeClosure =
 
 /// The store, keys, clock and functions of a test; builds engines on them.
 pub struct World {
-    pub db: Option<TestDb>,
+    pub db: TestDb,
     pub store: Arc<dyn Store + Send + Sync>,
-    pub pg: Option<Arc<PgStore>>,
+    pub pg: Arc<PgStore>,
     pub clock: TestClock,
     /// The native functions, shared with every engine of this world (functions defined
     /// after an engine was built are seen by it).
@@ -217,23 +218,6 @@ impl World {
         let db = TestDb::migrated();
         let pg = Arc::new(db.store());
         let store: Arc<dyn Store + Send + Sync> = pg.clone();
-        World::on(store, Some(db), Some(pg))
-    }
-
-    /// A world on an in-memory store (tests/common/mem.rs).
-    pub fn in_memory() -> World {
-        // A Version to clone (only datumesh-store can make one): from a PostgreSQL store.
-        let proto = {
-            let pg = World::new();
-            let h = pg.stored_fn("rates.example.org/proto", &[]);
-            let cell = Cell { ns: RATES.into(), fn_name: "proto".into(), fn_hash: h, args: Args::new() };
-            pg.publish(&cell, "1", &t(1, 0));
-            (pg.store.latest(&cell.id()).unwrap().unwrap(), pg.store.namespace(MESH).unwrap().unwrap())
-        };
-        World::on(Arc::new(mem::MemStore::new(proto.0, proto.1)), None, None)
-    }
-
-    fn on(store: Arc<dyn Store + Send + Sync>, db: Option<TestDb>, pg: Option<Arc<PgStore>>) -> World {
         for host in [MESH, RATES, PRICES, CALC] {
             store.put_namespace(host, &key_doc(host, &key_for(host)), "2020-01-01T00:00:00.000000Z").unwrap();
         }
@@ -249,7 +233,7 @@ impl World {
     }
 
     pub fn db(&self) -> &TestDb {
-        self.db.as_ref().expect("a PostgreSQL world")
+        &self.db
     }
 
     pub fn builder(&self) -> EngineBuilder {
@@ -376,7 +360,7 @@ impl World {
         self.store.receipt(hash).unwrap().into_owned()
     }
 
-    /// Every receipt the mesh signed, in the store (PostgreSQL worlds).
+    /// Every receipt the mesh signed, in the store.
     pub fn issued_receipts(&self) -> Vec<Vec<u8>> {
         let rows = self.db().client().query("SELECT bytes FROM receipts ORDER BY hash", &[]).unwrap();
         rows.iter()

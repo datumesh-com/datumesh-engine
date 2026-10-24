@@ -114,8 +114,10 @@ fn the_depth_limit_is_enforced() {
 
 #[test]
 fn a_100000_deep_chain_runs_on_a_2_mib_stack_under_a_raised_limit() {
-    let value = on_thread(1200, || {
-        let mut w = World::in_memory();
+    // On PostgreSQL: 100,001 receipts signed, verified by the store and stored, in one request.
+    let value = on_thread(1800, || {
+        let started = std::time::Instant::now();
+        let mut w = World::new();
         chain_world(&mut w);
         let e = w.engine_with(|b| b.depth_limit(100_001));
         let r = w.cellref(CHAIN, &[("n", num("100000"))]);
@@ -124,6 +126,8 @@ fn a_100000_deep_chain_runs_on_a_2_mib_stack_under_a_raised_limit() {
         assert_eq!(e.get(&r, None).unwrap(), a);
         assert!(matches!(e.get(&w.cellref(CHAIN, &[("n", num("54321"))]), None).unwrap(), Answer::Receipt(_)));
         assert_eq!(e.memo_stats().entries, 100_001);
+        assert_eq!(w.db().count("computed_versions"), 100_001);
+        eprintln!("100,000-deep chain on PostgreSQL: {:.1} s", started.elapsed().as_secs_f64());
         drop(e);
         drop(w);
         receipt_of(&a).value().clone()

@@ -153,8 +153,9 @@ fn after_a_cutoff_the_unchanged_readers_are_rechecked_from_memory() {
         w.native_fn(&name, &[below.as_str()], &[], move |_, i, _| Ok(add(&i.read(&input, &args(&[]))?, &num("1"))));
         below = name;
     }
-    let counting = std::sync::Arc::new(common::counting::Counting::new(w.store.clone()));
-    let store: std::sync::Arc<dyn datumesh_store::Store + Send + Sync> = counting.clone();
+    // The engine on a store of its own whose statements are counted on the wire.
+    let wire = common::wire::Wire::start(&w.db().config);
+    let store: std::sync::Arc<dyn datumesh_store::Store + Send + Sync> = std::sync::Arc::new(wire.store());
     let e = std::sync::Arc::new(
         datumesh_engine::Engine::builder(store, MESH)
             .signing_key(key_for(MESH))
@@ -171,13 +172,20 @@ fn after_a_cutoff_the_unchanged_readers_are_rechecked_from_memory() {
     assert_eq!(receipt_of(&before).value(), &num("21"));
     w.publish(&s, "30", &t(12, 0));
     assert_eq!(e.memo_stats().stale, 22, "s, the child and p1 .. p20 dropped, kept to recheck");
-    counting.take();
+    wire.take();
     w.reset_calls();
     assert_eq!(e.get(&top, Some(&t(13, 0))).unwrap(), before);
-    let calls = counting.take();
+    let sql = wire.take();
     assert_eq!(w.calls(CHILD), 1);
-    assert_eq!(calls.get("computed_asof_with_receipt").copied().unwrap_or(0), 1, "only the child's: {calls:?}");
-    assert_eq!(calls.get("put_receipt").copied().unwrap_or(0), 0, "{calls:?}");
+    // The store's computed versions: looked up for the child only (the others are rechecked
+    // from memory); stored versions: for s only; nothing written.
+    assert_eq!(common::wire::matching(&sql, "FROM computed_versions"), 1, "only the child's: {sql:#?}");
+    assert_eq!(common::wire::matching(&sql, "FROM versions"), 2, "s's version and those after it: {sql:#?}");
+    assert_eq!(common::wire::matching(&sql, "INSERT"), 0, "{sql:#?}");
+    // And the names: the top's, then each one read (p19 .. p1, the child, s), once each, and
+    // s's again as of the kept child's asof (whether its binding held then).
+    assert_eq!(common::wire::matching(&sql, "FROM name_bindings"), 23, "{sql:#?}");
+    assert_eq!(sql.values().sum::<usize>(), 26, "nothing else: {sql:#?}");
     assert_eq!(e.memo_stats().stale, 0);
     w.verify_all_issued(&e, "early_cutoff_recheck");
 }

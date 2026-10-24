@@ -19,12 +19,12 @@ default = []
 native-test = []
 
 [dependencies]
-datumesh-core = { version = "0.3.2", features = ["sign"] }
-datumesh-store = "0.2.0"
+datumesh-core = { version = "0.3.3", features = ["sign"] }
+datumesh-store = "0.3.0"
 tracing = "0.1.44"
 
 [dev-dependencies]
-datumesh-core = { version = "0.3.2", features = ["sign", "testkit"] }
+datumesh-core = { version = "0.3.3", features = ["sign", "testkit"] }
 
 [[example]]
 name = "bench"

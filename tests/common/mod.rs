@@ -10,7 +10,7 @@ pub mod mem;
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use datumesh_core::json::{self, Value};
@@ -19,7 +19,7 @@ use datumesh_core::{
     Type,
 };
 use datumesh_engine::native_test::NativeTest;
-use datumesh_engine::{Answer, Budget, Clock, Engine, EngineBuilder, EvalError, Inputs};
+use datumesh_engine::{Answer, Budget, Clock, Engine, EngineBuilder, EvalError, Inputs, Runtime};
 use datumesh_store::pg_unstable::postgres::{Client, Config, NoTls};
 use datumesh_store::{migrate, PgStore, Store};
 
@@ -202,7 +202,9 @@ pub struct World {
     pub store: Arc<dyn Store + Send + Sync>,
     pub pg: Option<Arc<PgStore>>,
     pub clock: TestClock,
-    pub native: NativeTest,
+    /// The native functions, shared with every engine of this world (functions defined
+    /// after an engine was built are seen by it).
+    pub native: Arc<RwLock<NativeTest>>,
     pub engines: Mutex<Vec<Weak<Engine>>>,
     /// Calls of each native function, by function name.
     pub calls: Arc<Mutex<BTreeMap<String, Arc<AtomicUsize>>>>,
@@ -239,7 +241,7 @@ impl World {
             store,
             pg,
             clock: TestClock::new(NOW),
-            native: NativeTest::new(),
+            native: Arc::new(RwLock::new(NativeTest::new())),
             engines: Mutex::new(Vec::new()),
             calls: Arc::new(Mutex::new(BTreeMap::new())),
         }
@@ -253,7 +255,7 @@ impl World {
         Engine::builder(self.store.clone(), MESH)
             .signing_key(key_for(MESH))
             .clock(Arc::new(self.clock.clone()))
-            .runtime(Arc::new(self.native.clone()))
+            .runtime(Arc::new(SharedNative(self.native.clone())))
     }
 
     /// An engine with the default configuration, notified of every version `publish` adds.
@@ -299,7 +301,7 @@ impl World {
         let h = self.store.put_descriptor(&d).unwrap();
         self.store.bind_name(fn_name, &h, BIND_TX).unwrap();
         let counter = self.calls.lock().unwrap().entry(fn_name.to_string()).or_default().clone();
-        self.native.register(h.clone(), move |c, i, b| {
+        self.native.write().unwrap().register(h.clone(), move |c, i, b| {
             counter.fetch_add(1, Ordering::SeqCst);
             f(c, i, b)
         });
@@ -396,6 +398,19 @@ impl World {
         }
         dump(test, &receipts);
         receipts.len()
+    }
+}
+
+/// The world's native functions as a runtime.
+pub struct SharedNative(pub Arc<RwLock<NativeTest>>);
+
+impl Runtime for SharedNative {
+    fn lang(&self) -> &str {
+        datumesh_engine::native_test::LANG
+    }
+    fn evaluate(&self, d: &Descriptor, c: &Cell, i: &mut dyn Inputs, b: &mut Budget) -> Result<Scalar, EvalError> {
+        let rt = self.0.read().unwrap().clone();
+        rt.evaluate(d, c, i, b)
     }
 }
 

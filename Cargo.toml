@@ -46,3 +46,11 @@ required-features = ["native-test"]
 [[test]]
 name = "computed"
 required-features = ["native-test"]
+
+[[test]]
+name = "memo"
+required-features = ["native-test"]
+
+[[test]]
+name = "early_cutoff"
+required-features = ["native-test"]

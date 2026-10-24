@@ -1,7 +1,13 @@
 //! Concurrency: two threads getting the same uncomputed cell evaluate it once and store one
 //! version; under a concurrent stream of new stored versions, the memo (fed by the dirty
-//! set) and validation agree: every answer equals what a fresh engine with no memo answers,
-//! and the value the history says.
+//! set) and validation agree: every answer has the value a fresh engine with no memo gives,
+//! and the history says, and a receipt that answers as of the asof and recomputes there.
+//!
+//! Not the same receipt in every case: when a cell's value changes and changes back
+//! (2 at 07:00, 3 at 09:00, 2 at 11:00), the version of 07:00 validates at 11:00 (its inputs
+//! give the same values again, early cutoff), so whether 11:00 is answered with it or with
+//! a version of 11:00 depends on which versions earlier requests happened to store. Both
+//! state the cell's value as of 11:00 correctly.
 
 mod common;
 
@@ -131,16 +137,23 @@ fn memo_and_validation_agree_under_a_stream_of_new_versions() {
     let history = history.lock().unwrap().clone();
     let fresh = w.engine_with(|b| b.memo_capacity(0));
     let mut by_asof: BTreeMap<String, Answer> = BTreeMap::new();
+    let keys = all_keys();
+    let value = |a: &Answer| match a {
+        Answer::Receipt(_) => Some(receipt_of(a).value().clone()),
+        Answer::NotCovered => None,
+    };
     for (asof, answer) in &seen {
         let want = fresh.get(&top, Some(asof)).unwrap();
-        assert_eq!(answer, &want, "as of {asof}");
-        match (answer, oracle(&history, asof)) {
-            (Answer::Receipt(_), Some(v)) => assert_eq!(receipt_of(answer).value(), &Scalar::Number(v.to_string()), "{asof}"),
-            (Answer::NotCovered, None) => {}
-            (a, v) => panic!("as of {asof}: {a:?}, the history says {v:?}"),
+        assert_eq!(value(answer), value(&want), "as of {asof}");
+        assert_eq!(value(answer), oracle(&history, asof).map(|v| Scalar::Number(v.to_string())), "as of {asof}");
+        if let Answer::Receipt(bytes) = answer {
+            let r = receipt_of(answer);
+            assert!(r.asof() <= asof.as_str(), "as of {asof}: a receipt as of {}", r.asof());
+            let out = datumesh_core::verify(bytes, &keys, Some(&*fresh as &dyn datumesh_core::Resolver), None);
+            assert_eq!(out.level, Some(datumesh_core::Level::Recomputed), "{out:?}");
         }
         if let Some(prev) = by_asof.insert(asof.clone(), answer.clone()) {
-            assert_eq!(&prev, answer, "two answers as of {asof}");
+            assert_eq!(value(&prev), value(answer), "two values as of {asof}");
         }
     }
     w.verify_all_issued(&e, "concurrency_stream");

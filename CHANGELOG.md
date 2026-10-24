@@ -2,7 +2,7 @@
 
 All notable changes to `datumesh-engine`.
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-10-24)
 
 The first release: the engine of step 1.2b, on `datumesh-store` 0.2.0 and `datumesh-core`
 0.3.2 (spec-0.3.0).
@@ -16,6 +16,9 @@ The first release: the engine of step 1.2b, on `datumesh-store` 0.2.0 and `datum
   later where needed for the receipt to hold as of it), or the version kept when the value
   is the same. New receipts and versions (`put_computed`) are written only when the request
   succeeded.
+- Receipt identity is per computed version (cell, `tx`, `asof`); two valid receipts for the
+  same value may exist with different lineage. After a backdated correction, the old receipt
+  stays signature-valid but no longer recomputes (documented in the crate docs).
 - `Runtime`, `Inputs`, `Budget`: the contract for function languages. Evaluation on an
   explicit stack; a read of an input not computed yet suspends the function, which is run
   again once the input is answered. `Cycle`, a depth limit (default 10,000), fuel per request

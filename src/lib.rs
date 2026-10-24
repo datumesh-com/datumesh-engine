@@ -43,6 +43,21 @@
 //! A function that reads nothing has `tx` = `asof` = `0001-01-01T00:00:00.000000Z`: its value
 //! does not depend on time.
 //!
+//! ## Receipt identity
+//!
+//! Receipt identity is per computed version, keyed on (cell, `tx`, `asof`). Two valid
+//! receipts for the same value may exist with different lineage: when an input changes and
+//! changes back, validation by value (early cutoff) can accept either version, so which one
+//! answers depends on which versions earlier requests stored. The value is always the same.
+//!
+//! A backdated correction (an input superseded at a `tx` earlier than the receipt's own `tx`)
+//! would give a second version under an existing key, which the store refuses. The engine
+//! keeps the stored version, which answers correctly, and reuses a receipt it signed before
+//! for exactly the current inputs. The old receipt stays signature-valid and answers the
+//! asofs it was issued for; it no longer recomputes, because one of its inputs has been
+//! superseded. Recomputation verifies "given these exact inputs", and the inputs it cites are
+//! still the ones it used: the receipt is historical, not wrong.
+//!
 //! # Memo, validation and early cutoff
 //!
 //! A version is valid as of A when every input receipt it lists, its name still resolving to

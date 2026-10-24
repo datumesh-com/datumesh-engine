@@ -110,7 +110,8 @@ fn an_input_read_twice_is_listed_once_and_valid_time_arguments_are_echoed() {
     let fx = w.cell(FX, &[("quote", text("USD"))]);
     let h = w.publish(&fx, "3", &t(15, 16));
     let date = datumesh_core::Scalar::from_lexical(datumesh_core::Type::Date, "2024-03-15").unwrap();
-    let r = receipt_of(&e.get(&w.cellref("calc.example.net/twice", &[("day", date.clone())]), Some(&t(20, 0))).unwrap());
+    let r =
+        receipt_of(&e.get(&w.cellref("calc.example.net/twice", &[("day", date.clone())]), Some(&t(20, 0))).unwrap());
     assert_eq!(r.value(), &num("6"));
     assert_eq!(r.inputs(), [h].as_slice());
     assert_eq!(r.valid(), &args(&[("day", date)]));
@@ -121,7 +122,8 @@ fn an_input_read_twice_is_listed_once_and_valid_time_arguments_are_echoed() {
 fn licence_and_summary_come_from_the_engine_configuration() {
     let w = world();
     let e = w.engine_with(|b| {
-        b.licence("https://example.com/licence").summary(|c| format!("Total for {}.", c.args["item"].scalar().unwrap().lexical()))
+        b.licence("https://example.com/licence")
+            .summary(|c| format!("Total for {}.", c.args["item"].scalar().unwrap().lexical()))
     });
     w.publish(&w.cell(FX, &[("quote", text("USD"))]), "3", &t(15, 16));
     w.publish(&w.cell(PRICE, &[("item", text("nut"))]), "1", &t(15, 17));
@@ -148,15 +150,21 @@ fn runtime_mistakes_are_errors_and_store_nothing() {
     let e = w.engine();
     w.publish(&w.cell(FX, &[("quote", text("USD"))]), "3", &t(15, 16));
     let get = |name: &str| e.get(&w.cellref(name, &[]), Some(&t(20, 0)));
-    assert!(matches!(get("calc.example.net/undeclared"), Err(EngineError::UndeclaredInput { fn_name }) if fn_name == FX));
+    assert!(
+        matches!(get("calc.example.net/undeclared"), Err(EngineError::UndeclaredInput { fn_name }) if fn_name == FX)
+    );
     match get("calc.example.net/badargs") {
         Err(EngineError::Invalid(e)) => assert_eq!(e.code(), datumesh_core::ErrorCode::ArgUnknown),
         other => panic!("{other:?}"),
     }
-    assert!(matches!(get("calc.example.net/fails"), Err(EngineError::Runtime { message, .. }) if message.contains("boom")));
+    assert!(
+        matches!(get("calc.example.net/fails"), Err(EngineError::Runtime { message, .. }) if message.contains("boom"))
+    );
     assert!(matches!(get("calc.example.net/string"), Err(EngineError::Runtime { .. })));
     assert!(matches!(get("calc.example.net/expr"), Err(EngineError::NoRuntime { lang, .. }) if lang == "expr"));
-    assert!(matches!(get("calc.example.net/unbound"), Err(EngineError::NameUnresolved { fn_name, .. }) if fn_name == "calc.example.net/never"));
+    assert!(
+        matches!(get("calc.example.net/unbound"), Err(EngineError::NameUnresolved { fn_name, .. }) if fn_name == "calc.example.net/never")
+    );
     assert_eq!(w.db().count("computed_versions"), 0);
     assert_eq!(w.db().count("receipts"), 1);
 }

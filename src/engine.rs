@@ -10,10 +10,10 @@ use datumesh_core::{lexical, Cell, CellRef, Descriptor, KeyDoc, Resolver, Scalar
 use datumesh_store::Store;
 
 use crate::cache::{Cache, Parsed};
-use crate::eval::{is_instant, parse_stored, Done, Req};
 use crate::check::{check_args, check_no_slice};
 use crate::clock::{Clock, SystemClock};
 use crate::error::{ConfigError, EngineError, EvalError, StoreError};
+use crate::eval::{is_instant, parse_stored, Done, Req};
 use crate::memo::Memo;
 use crate::runtime::Runtime;
 
@@ -335,7 +335,14 @@ impl Engine {
     /// Evaluates a computed cell in a request of its own (the caller holds the evaluator):
     /// memo first, then the store's version validated, else the function; writes what is new
     /// and keeps the answers in the memo.
-    fn evaluate_cell(&self, cell: &Cell, desc: Arc<Descriptor>, a: &str, now: &str, unsigned: bool) -> Result<Done, EngineError> {
+    fn evaluate_cell(
+        &self,
+        cell: &Cell,
+        desc: Arc<Descriptor>,
+        a: &str,
+        now: &str,
+        unsigned: bool,
+    ) -> Result<Done, EngineError> {
         let start = self.memo.begin();
         let mut req = Req::new(self, a, now);
         let result = (|| {
@@ -377,10 +384,9 @@ impl Engine {
         }
         let now = self.clock.now();
         let done = if desc.lang == STORED {
-            Req::new(self, asof, &now).stored(cell, &cell.id()).map_err(|e| EngineError::Runtime {
-                cell_id: cell.id(),
-                message: e.to_string(),
-            })?
+            Req::new(self, asof, &now)
+                .stored(cell, &cell.id())
+                .map_err(|e| EngineError::Runtime { cell_id: cell.id(), message: e.to_string() })?
         } else {
             let _single = self.evaluator.lock().unwrap_or_else(|p| p.into_inner());
             self.evaluate_cell(cell, desc, asof, &now, true)?

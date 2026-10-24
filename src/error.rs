@@ -213,7 +213,9 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EngineError::NoRuntime { lang, fn_hash } => write!(f, "no runtime for language {lang} (function {fn_hash})"),
+            EngineError::NoRuntime { lang, fn_hash } => {
+                write!(f, "no runtime for language {lang} (function {fn_hash})")
+            }
             EngineError::UndeclaredInput { fn_name } => write!(f, "{fn_name} is not a declared input"),
             EngineError::Cycle { cell_id } => write!(f, "cycle: cell {cell_id} depends on itself"),
             EngineError::DepthExceeded { limit } => write!(f, "evaluation deeper than the limit of {limit}"),

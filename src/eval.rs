@@ -319,7 +319,8 @@ impl<'e> Req<'e> {
                 }
             }
         }
-        let lo = read.iter().map(|a| a.lo.as_str()).chain(std::iter::once(ans.asof.as_str())).max().unwrap_or(MIN_INSTANT);
+        let lo =
+            read.iter().map(|a| a.lo.as_str()).chain(std::iter::once(ans.asof.as_str())).max().unwrap_or(MIN_INSTANT);
         Ok(Step::Done(Done::Value(Arc::new(Ans {
             id: f.id.clone(),
             hash: ans.hash.clone(),
@@ -407,7 +408,9 @@ impl<'e> Req<'e> {
         self.budget.charge_shared(1).map_err(|e| engine_error(e, id))?;
         let Some(desc) = self.eng.descriptor_of(&cell.fn_hash)? else { return Ok(Check::Differs) };
         match self.lookup(cell, id, desc).map_err(|e| engine_error(e, id))? {
-            Lookup::Ready(Done::Value(a)) if a.hash == h || &a.value == value => Ok(Check::Same(a, name, cell.fn_hash.clone())),
+            Lookup::Ready(Done::Value(a)) if a.hash == h || &a.value == value => {
+                Ok(Check::Same(a, name, cell.fn_hash.clone()))
+            }
             Lookup::Ready(_) => Ok(Check::Differs),
             Lookup::Eval(desc) => Ok(Check::Pending(cell.clone(), id.to_string(), desc)),
         }
@@ -502,7 +505,13 @@ impl<'e> Req<'e> {
         // is where this value is known: SPEC 8.2 rule 2 when no input was kept.
         let latest = read.values().map(|a| a.lo.as_str()).max().unwrap_or(MIN_INSTANT).to_string();
         let asof = self.knowable_asof(latest, &names).map_err(|e| engine_error(e, &f.id))?;
-        let lo = read.values().map(|a| a.lo.as_str()).chain(std::iter::once(asof.as_str())).max().unwrap_or(MIN_INSTANT).to_string();
+        let lo = read
+            .values()
+            .map(|a| a.lo.as_str())
+            .chain(std::iter::once(asof.as_str()))
+            .max()
+            .unwrap_or(MIN_INSTANT)
+            .to_string();
         let hi = read.values().filter_map(|a| a.hi.clone()).min();
         let inputs = uses(read.values());
         let existing = match &cand {
@@ -566,7 +575,12 @@ impl<'e> Req<'e> {
     }
 
     /// A stored receipt of cell `id` by this mesh with exactly the inputs `read` and `value`.
-    fn signed_before(&mut self, id: &str, read: &BTreeMap<String, Arc<Ans>>, value: &Scalar) -> Result<Option<Arc<Parsed>>, EngineError> {
+    fn signed_before(
+        &mut self,
+        id: &str,
+        read: &BTreeMap<String, Arc<Ans>>,
+        value: &Scalar,
+    ) -> Result<Option<Arc<Parsed>>, EngineError> {
         let Some(first) = read.keys().next() else { return Ok(None) };
         let candidates = self.eng.store.dependents(first).map_err(|e| StoreError::new("dependents", e))?;
         for h in candidates {
@@ -716,7 +730,10 @@ impl Inputs for Reader<'_, '_> {
 }
 
 /// The names of `answers` and `own`, sharing an `Arc` when nothing is added.
-fn merge_names<'a>(answers: impl Iterator<Item = &'a Arc<Ans>>, own: BTreeMap<String, String>) -> Arc<BTreeMap<String, String>> {
+fn merge_names<'a>(
+    answers: impl Iterator<Item = &'a Arc<Ans>>,
+    own: BTreeMap<String, String>,
+) -> Arc<BTreeMap<String, String>> {
     let mut acc: Option<Arc<BTreeMap<String, String>>> = None;
     for a in answers {
         match &mut acc {

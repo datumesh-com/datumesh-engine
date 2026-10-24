@@ -172,8 +172,12 @@ impl Memo {
                     + a.asof.len()
                     + a.lo.len()
                     + a.hi.as_ref().map_or(0, String::len)
-                    + a.inputs.iter().map(|u| u.id.len() + u.hash.len() + std::mem::size_of_val(u) + 160).sum::<usize>()
-                    + a.names.iter().map(|(k, v)| k.len() + v.len() + 64).sum::<usize>() / Arc::strong_count(&a.names).max(1);
+                    + a.inputs
+                        .iter()
+                        .map(|u| u.id.len() + u.hash.len() + std::mem::size_of_val(u) + 160)
+                        .sum::<usize>()
+                    + a.names.iter().map(|(k, v)| k.len() + v.len() + 64).sum::<usize>()
+                        / Arc::strong_count(&a.names).max(1);
             }
         }
         for (k, set) in &s.readers {

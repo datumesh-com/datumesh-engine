@@ -26,7 +26,11 @@ pub(crate) fn check_args(cell: &Cell, d: &Descriptor) -> Result<(), Error> {
     let decl = &d.signature.args;
     for k in cell.args.keys() {
         if !decl.contains_key(k) {
-            return Err(Error::new(ErrorCode::ArgUnknown, format!("$.args.{k}"), "the function declares no such argument"));
+            return Err(Error::new(
+                ErrorCode::ArgUnknown,
+                format!("$.args.{k}"),
+                "the function declares no such argument",
+            ));
         }
     }
     for k in decl.keys() {
@@ -44,5 +48,9 @@ pub(crate) fn check_args(cell: &Cell, d: &Descriptor) -> Result<(), Error> {
 
 /// The valid-time arguments of a cell (SPEC 8.1 `valid`).
 pub(crate) fn valid_args(cell: &Cell, d: &Descriptor) -> Args {
-    cell.args.iter().filter(|(k, _)| d.signature.args.get(*k).is_some_and(|x| x.valid)).map(|(k, a)| (k.clone(), a.clone())).collect()
+    cell.args
+        .iter()
+        .filter(|(k, _)| d.signature.args.get(*k).is_some_and(|x| x.valid))
+        .map(|(k, a)| (k.clone(), a.clone()))
+        .collect()
 }

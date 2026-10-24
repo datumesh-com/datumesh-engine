@@ -13,7 +13,10 @@ const PRICE: &str = "prices.example.net/price";
 const TOTAL: &str = "calc.example.net/total";
 const ITEM: &str = r#"{"type":"string","valid":false}"#;
 
-fn total(cell: &datumesh_core::Cell, i: &mut dyn datumesh_engine::Inputs) -> Result<datumesh_core::Scalar, datumesh_engine::EvalError> {
+fn total(
+    cell: &datumesh_core::Cell,
+    i: &mut dyn datumesh_engine::Inputs,
+) -> Result<datumesh_core::Scalar, datumesh_engine::EvalError> {
     let item = cell.args["item"].scalar().unwrap().clone();
     let fx = i.read(FX, &args(&[("quote", text("USD"))]))?;
     let price = i.read(PRICE, &args(&[("item", item)]))?;

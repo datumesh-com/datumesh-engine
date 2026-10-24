@@ -180,7 +180,12 @@ impl Store for MemStore {
         let list = g.names.entry(fn_name.to_string()).or_default();
         if let Some((last, _)) = list.last() {
             if last.as_str() >= tx {
-                return Err(Error::NotLater { what: "name", key: fn_name.into(), given: tx.into(), latest: last.clone() });
+                return Err(Error::NotLater {
+                    what: "name",
+                    key: fn_name.into(),
+                    given: tx.into(),
+                    latest: last.clone(),
+                });
             }
         }
         list.push((tx.to_string(), fn_hash.to_string()));
@@ -189,7 +194,9 @@ impl Store for MemStore {
 
     fn resolve_name(&self, fn_name: &str, asof: &str) -> Result<Option<String>> {
         let g = self.inner.read().unwrap();
-        Ok(g.names.get(fn_name).and_then(|l| l.iter().rev().find(|(tx, _)| tx.as_str() <= asof).map(|(_, h)| h.clone())))
+        Ok(g.names
+            .get(fn_name)
+            .and_then(|l| l.iter().rev().find(|(tx, _)| tx.as_str() <= asof).map(|(_, h)| h.clone())))
     }
 
     fn put_computed(&self, cell_id: &str, tx: &str, receipt_hash: &str) -> Result<()> {

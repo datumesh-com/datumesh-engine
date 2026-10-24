@@ -74,7 +74,9 @@ impl Budget {
     /// A budget of `fuel` units (for a runtime's own tests; the engine makes the budget of a
     /// request from its configured fuel).
     pub fn new(fuel: u64) -> Budget {
-        Budget { fuel: Arc::new(Fuel { limit: fuel, remaining: AtomicU64::new(fuel), exhausted: AtomicBool::new(false) }) }
+        Budget {
+            fuel: Arc::new(Fuel { limit: fuel, remaining: AtomicU64::new(fuel), exhausted: AtomicBool::new(false) }),
+        }
     }
 
     /// Charges `steps` units of work. [`EvalError::BudgetExceeded`] when fewer remain: the

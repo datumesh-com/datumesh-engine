@@ -427,9 +427,7 @@ pub fn dump(test: &str, receipts: &[Vec<u8>]) {
     for bytes in receipts {
         let keys: Vec<(String, Value)> = [MESH, RATES, PRICES, CALC]
             .iter()
-            .map(|h| {
-                (h.to_string(), Value::String(String::from_utf8(key_doc(h, &key_for(h))).unwrap()))
-            })
+            .map(|h| (h.to_string(), Value::String(String::from_utf8(key_doc(h, &key_for(h))).unwrap())))
             .collect();
         let line = Value::Object(vec![
             ("hash".into(), Value::String(Receipt::from_json(bytes).unwrap().hash().to_string())),

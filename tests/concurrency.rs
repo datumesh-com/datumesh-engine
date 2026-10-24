@@ -71,9 +71,14 @@ fn graph() -> World {
     w
 }
 
-/// The value of top as of `asof` from the history of (tx, cell, value).
+/// The versions published: (tx, cell, value).
+type History = Vec<(String, &'static str, i128)>;
+
+/// The value of top as of `asof` from the history.
 fn oracle(history: &[(String, &'static str, i128)], asof: &str) -> Option<i128> {
-    let latest = |c: &str| history.iter().filter(|(tx, cell, _)| *cell == c && tx.as_str() <= asof).map(|(_, _, v)| *v).last();
+    let latest = |c: &str| {
+        history.iter().filter(|(tx, cell, _)| *cell == c && tx.as_str() <= asof).map(|(_, _, v)| *v).next_back()
+    };
     let (s1, s2) = (latest(S1)?, latest(S2)?);
     Some(i128::from(s1 >= 10) + s2)
 }
@@ -95,7 +100,7 @@ fn memo_and_validation_agree_under_a_stream_of_new_versions() {
             _ => (S2, (k as i128) % 3),
         })
         .collect();
-    let history: Arc<Mutex<Vec<(String, &'static str, i128)>>> = Arc::new(Mutex::new(Vec::new()));
+    let history: Arc<Mutex<History>> = Arc::new(Mutex::new(Vec::new()));
     let watermark = Arc::new(Mutex::new(String::new()));
     let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let tx_of = |k: usize| format!("2024-04-{:02}T{:02}:00:00.000000Z", 1 + k / 24, k % 24);
@@ -115,7 +120,11 @@ fn memo_and_validation_agree_under_a_stream_of_new_versions() {
                     // The latest published time, or an earlier step's.
                     let asof = {
                         let h = history.lock().unwrap();
-                        if i % 3 == 0 { w.clone() } else { h[i % h.len()].0.clone() }
+                        if i % 3 == 0 {
+                            w.clone()
+                        } else {
+                            h[i % h.len()].0.clone()
+                        }
                     };
                     i += 7;
                     seen.push((asof.clone(), e.get(&top, Some(&asof)).unwrap()));

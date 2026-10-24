@@ -102,7 +102,13 @@ impl Bench {
             .unwrap()
     }
 
-    fn function(&mut self, name: &str, inputs: &[&str], arg_decls: &[(&str, &str)], f: impl Fn(&Cell, &mut dyn Inputs, &mut Budget) -> Result<Scalar, EvalError> + Send + Sync + 'static) {
+    fn function(
+        &mut self,
+        name: &str,
+        inputs: &[&str],
+        arg_decls: &[(&str, &str)],
+        f: impl Fn(&Cell, &mut dyn Inputs, &mut Budget) -> Result<Scalar, EvalError> + Send + Sync + 'static,
+    ) {
         let h = self.store.put_descriptor(&descriptor("native_test", name, inputs, arg_decls)).unwrap();
         self.store.bind_name(name, &h, BIND).unwrap();
         self.native.register(h, f);
@@ -167,13 +173,7 @@ impl Stats {
         self.0.iter().sum::<Duration>() / self.0.len() as u32
     }
     fn row(&self, what: &str) {
-        println!(
-            "| {what} | {} | {} | {} | {} |",
-            self.0.len(),
-            fmt(self.p(0.5)),
-            fmt(self.p(0.99)),
-            fmt(self.mean())
-        );
+        println!("| {what} | {} | {} | {} | {} |", self.0.len(), fmt(self.p(0.5)), fmt(self.p(0.99)), fmt(self.mean()));
     }
 }
 
@@ -204,7 +204,9 @@ fn main() {
         None => panic!("DATABASE_URL has no database"),
     };
     let result = std::panic::catch_unwind(|| run(&url));
-    let _ = admin_config.connect(NoTls).map(|mut c| c.batch_execute(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)")));
+    let _ = admin_config
+        .connect(NoTls)
+        .map(|mut c| c.batch_execute(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)")));
     if let Err(p) = result {
         std::panic::resume_unwind(p);
     }
@@ -212,7 +214,7 @@ fn main() {
 
 fn run(url: &str) {
     let store = Arc::new(PgStore::connect(url).unwrap());
-    migrate::apply(&*store).unwrap();
+    migrate::apply(&store).unwrap();
     let publisher = SigningKey::from_seed(&[1; 32]);
     let mesh = SigningKey::from_seed(&[9; 32]);
     store.put_namespace(PUB, &key_doc(PUB, &publisher), "2020-01-01T00:00:00.000000Z").unwrap();
@@ -223,18 +225,29 @@ fn run(url: &str) {
     let mut b = Bench { store: store.clone(), publisher, native: NativeTest::new(), clock: clock.clone(), s_hash };
 
     // f(k) = s(k) + 1.
-    b.function("bench.example.org/f", &[S], &[("k", N)], |c, i, _| Ok(num(int(&i.read(S, &args(&[("k", c.args["k"].scalar().unwrap().clone())]))?) + 1)));
+    b.function("bench.example.org/f", &[S], &[("k", N)], |c, i, _| {
+        Ok(num(int(&i.read(S, &args(&[("k", c.args["k"].scalar().unwrap().clone())]))?) + 1))
+    });
     // A diamond over s(k): top = left + right, left = shared + 1, right = shared + 2, shared = s(k) * 2.
-    b.function("bench.example.org/shared", &[S], &[("k", N)], |c, i, _| Ok(num(2 * int(&i.read(S, &args(&[("k", c.args["k"].scalar().unwrap().clone())]))?))));
+    b.function("bench.example.org/shared", &[S], &[("k", N)], |c, i, _| {
+        Ok(num(2 * int(&i.read(S, &args(&[("k", c.args["k"].scalar().unwrap().clone())]))?)))
+    });
     for (name, plus) in [("bench.example.org/left", 1), ("bench.example.org/right", 2)] {
         b.function(name, &["bench.example.org/shared"], &[("k", N)], move |c, i, _| {
-            Ok(num(int(&i.read("bench.example.org/shared", &args(&[("k", c.args["k"].scalar().unwrap().clone())]))?) + plus))
+            Ok(num(int(&i.read("bench.example.org/shared", &args(&[("k", c.args["k"].scalar().unwrap().clone())]))?)
+                + plus))
         });
     }
-    b.function("bench.example.org/top", &["bench.example.org/left", "bench.example.org/right"], &[("k", N)], |c, i, _| {
-        let k = c.args["k"].scalar().unwrap().clone();
-        Ok(num(int(&i.read("bench.example.org/left", &args(&[("k", k.clone())]))?) + int(&i.read("bench.example.org/right", &args(&[("k", k)]))?)))
-    });
+    b.function(
+        "bench.example.org/top",
+        &["bench.example.org/left", "bench.example.org/right"],
+        &[("k", N)],
+        |c, i, _| {
+            let k = c.args["k"].scalar().unwrap().clone();
+            Ok(num(int(&i.read("bench.example.org/left", &args(&[("k", k.clone())]))?)
+                + int(&i.read("bench.example.org/right", &args(&[("k", k)]))?)))
+        },
+    );
     // chain(n, k) = chain(n - 1, k) + 1, chain(0, k) = s(k).
     b.function("bench.example.org/chain", &["bench.example.org/chain", S], &[("k", N), ("n", N)], |c, i, _| {
         let k = c.args["k"].scalar().unwrap().clone();
@@ -295,10 +308,14 @@ fn run(url: &str) {
     };
     let samples = 10_000;
     let warm = |f: &mut dyn FnMut() -> Duration| Stats::of((0..samples).map(|_| f()).collect());
-    warm(&mut || time(|| e.get(&refs_s[pick()], None).unwrap()).1).row("warm `get` stored, by reference (name resolved: 1 query)");
-    warm(&mut || time(|| e.get_cell(&cells_s[pick()], None).unwrap()).1).row("warm `get_cell` stored (pinned: no query)");
-    warm(&mut || time(|| e.get(&refs_f[pick()], None).unwrap()).1).row("warm `get` computed f = s + 1, by reference (2 queries: f's name, s's name)");
-    warm(&mut || time(|| e.get_cell(&cells_f[pick()], None).unwrap()).1).row("warm `get_cell` computed f (1 query: s's name)");
+    warm(&mut || time(|| e.get(&refs_s[pick()], None).unwrap()).1)
+        .row("warm `get` stored, by reference (name resolved: 1 query)");
+    warm(&mut || time(|| e.get_cell(&cells_s[pick()], None).unwrap()).1)
+        .row("warm `get_cell` stored (pinned: no query)");
+    warm(&mut || time(|| e.get(&refs_f[pick()], None).unwrap()).1)
+        .row("warm `get` computed f = s + 1, by reference (2 queries: f's name, s's name)");
+    warm(&mut || time(|| e.get_cell(&cells_f[pick()], None).unwrap()).1)
+        .row("warm `get_cell` computed f (1 query: s's name)");
     cold_stored.row("cold `get` stored (empty memo: resolve_name, stored_asof_with_receipt, versions)");
     cold_f.row("cold `get` computed f, first ever (computed_asof, s, sign, put_receipt, put_computed)");
     // A fresh engine on the same store: f's versions are validated, not recomputed.
@@ -398,7 +415,10 @@ fn run(url: &str) {
         println!("{r}");
     }
     let _ = a0;
-    println!("\nThe dirty set holds marks only while an evaluation that began before them runs; at rest it is {}.", ge.memo_stats().dirty);
+    println!(
+        "\nThe dirty set holds marks only while an evaluation that began before them runs; at rest it is {}.",
+        ge.memo_stats().dirty
+    );
     println!(
         "Rows: receipts {}, computed_versions {}, versions {}.",
         store_count(url, "receipts"),

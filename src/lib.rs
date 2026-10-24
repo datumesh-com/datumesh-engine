@@ -7,9 +7,12 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod cache;
+mod check;
 mod clock;
 mod engine;
 mod error;
+mod memo;
 #[cfg(feature = "native-test")]
 pub mod native_test;
 mod runtime;

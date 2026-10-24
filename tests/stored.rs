@@ -66,7 +66,7 @@ fn a_correction_answers_later_asofs_and_the_old_receipt_earlier_ones() {
     let h1 = w.publish(&cell, "1.0892", &t(15, 16));
     // Memoise the first answer, as of a time after the correction's tx.
     assert_eq!(bytes_of(&e.get(&r, Some(&t(20, 0))).unwrap()), w.stored_bytes(&h1));
-    let h2 = w.publish(&cell, "1.0900", &t(17, 9));
+    let h2 = w.publish(&cell, "1.09", &t(17, 9));
     for (asof, want) in [(t(15, 16), &h1), (t(17, 8), &h1), (t(17, 9), &h2), (t(20, 0), &h2)] {
         assert_eq!(bytes_of(&e.get(&r, Some(&asof)).unwrap()), w.stored_bytes(want), "as of {asof}");
     }
@@ -84,7 +84,7 @@ fn a_late_signed_receipt_does_not_answer_between_its_tx_and_its_asof() {
     assert_eq!(e.get(&r, Some(&t(16, 8))).unwrap(), Answer::NotCovered);
     assert_eq!(bytes_of(&e.get(&r, Some(&t(16, 9))).unwrap()), w.stored_bytes(&h1));
     // A late-signed correction: the first version answers until its asof.
-    let h2 = w.publish_late(&cell, "1.0900", &t(18, 10), &t(20, 0));
+    let h2 = w.publish_late(&cell, "1.09", &t(18, 10), &t(20, 0));
     for (asof, want) in [(t(18, 10), &h1), (t(19, 23), &h1), (t(20, 0), &h2), (t(25, 0), &h2)] {
         assert_eq!(bytes_of(&e.get(&r, Some(&asof)).unwrap()), w.stored_bytes(want), "as of {asof}");
     }

@@ -42,3 +42,7 @@ all-features = true
 [[test]]
 name = "stored"
 required-features = ["native-test"]
+
+[[test]]
+name = "computed"
+required-features = ["native-test"]

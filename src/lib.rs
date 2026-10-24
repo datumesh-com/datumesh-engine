@@ -5,8 +5,8 @@
 //! engine signs with the mesh's key after evaluating the cell's function through a
 //! [`Runtime`], from the receipts of the cells it reads. Answers are memoised; computed
 //! versions are kept in the store (`put_computed`) and validated before they are reused. The
-//! store is any [`datumesh_store::Store`] (in practice a `PgStore`); the API is synchronous
-//! and [`Engine`] is `Send + Sync`.
+//! store is a [`datumesh_store::Store`] (a `PgStore`: the trait is sealed); the API is
+//! synchronous and [`Engine`] is `Send + Sync`.
 //!
 //! # Answering as of A
 //!
@@ -30,15 +30,23 @@
 //! engine's configuration ([`EngineBuilder::licence`], [`EngineBuilder::summary`]): the
 //! descriptor has neither, and adding them would change function hashes.
 //!
-//! `asof` is the latest input `asof` (SPEC 8.2 rule 2), with two refinements that keep every
-//! receipt true as of its own `asof` (so that it recomputes there):
+//! `asof` is the latest of its input asofs and the start of every name binding it relied on
+//! (SPEC 8.2 rule 2 for the inputs), so that the receipt is true as of its own `asof` and
+//! recomputes there:
 //!
-//! * an input answered by a version that was kept or validated across a change of its own
-//!   inputs counts from where its value was established again, not from its receipt's
-//!   `asof`;
-//! * if a function name the value depends on resolved differently at that instant than as
-//!   of A (bound later, or rebound), the receipt's `asof` is A. The store does not say when a
-//!   binding began, so no earlier instant is known.
+//! * an input's asof is where its answer starts: its receipt's `asof`, except for an input
+//!   answered by a version that was kept or validated across a change of its own inputs,
+//!   which counts from where its value was established again;
+//! * the names relied on are the function names read, transitively (an input's own inputs'
+//!   names included, and a function's own name when it reads itself, as fib does); each
+//!   binding's start is when the binding answering as of A began
+//!   ([`Store::resolve_binding`](datumesh_store::Store::resolve_binding)): a name bound
+//!   again, even to the same function, begins again. The requested cell's own name is not
+//!   among them: its receipt pins the function hash.
+//!
+//! The asof is never later than A. Between it and A the inputs and the bindings are those
+//! read, so the one receipt answers every request in between (and later ones, after
+//! validation).
 //!
 //! A function that reads nothing has `tx` = `asof` = `0001-01-01T00:00:00.000000Z`: its value
 //! does not depend on time.

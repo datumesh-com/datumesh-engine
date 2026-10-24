@@ -2,6 +2,26 @@
 
 All notable changes to `datumesh-engine`.
 
+## 0.2.0 (unreleased)
+
+On `datumesh-store` 0.3.0 and `datumesh-core` 0.3.3.
+
+- **Breaking:** the public API names `datumesh-store` 0.3 types (`Engine::builder` takes an
+  `Arc<dyn datumesh_store::Store + Send + Sync>`; `StoreError::store_error` returns a
+  `datumesh_store::Error`), so engine 0.1 does not take a store 0.3. The listing of the API is unchanged
+  (`API-CHANGES-0.2.0.md`). `Store` is sealed
+  since store 0.3.0: the store is a `PgStore`.
+- A computed receipt's `asof` is the latest of its input asofs and the start of every name
+  binding it relied on (the names read, transitively, through `Store::resolve_binding`). In
+  0.1.0 a name bound after the inputs' asof made the receipt's asof the request's: a
+  receipt per requested asof. Now one receipt answers from the binding's start (fib above
+  its base cases: from when `fib` was bound). An input kept across a change of its own
+  inputs still counts from where its value is known again.
+- One query fewer per name for such receipts: a name and its binding's start come together.
+- The core's test kit passes every check under its default answering rule `TxAndAsof`.
+- Tests run on `PgStore` only (the in-memory and counting test stores could not implement
+  the sealed trait): the 100,000-deep chain on PostgreSQL; statement counts on the wire.
+
 ## 0.1.0 (2026-10-24)
 
 The first release: the engine of step 1.2b, on `datumesh-store` 0.2.0 and `datumesh-core`

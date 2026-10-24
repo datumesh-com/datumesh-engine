@@ -1,14 +1,14 @@
 # datumesh-engine
 
-The [Datumesh](https://datumesh.com) engine: the value of a cell as of a time. `Engine::get` answers with a receipt: for a stored cell, the publisher's receipt from the store, unchanged; for a computed cell, one the engine signs with the mesh's key after evaluating the cell's function through a `Runtime`, from the receipts of the cells it reads. Answers are memoised, computed versions are kept in the store and validated before reuse, and evaluation runs on an explicit stack, so a function may read itself (SecDB-style recursion) to any depth the limit allows. It implements [spec-0.3.0](https://github.com/datumesh-com/datumesh-spec) on [`datumesh-store`](https://crates.io/crates/datumesh-store) 0.2.0 and [`datumesh-core`](https://crates.io/crates/datumesh-core) 0.3.2. Function languages plug in through `Runtime`; HTTP is not part of it.
+The [Datumesh](https://datumesh.com) engine: the value of a cell as of a time. `Engine::get` answers with a receipt: for a stored cell, the publisher's receipt from the store, unchanged; for a computed cell, one the engine signs with the mesh's key after evaluating the cell's function through a `Runtime`, from the receipts of the cells it reads. Answers are memoised, computed versions are kept in the store and validated before reuse, and evaluation runs on an explicit stack, so a function may read itself (SecDB-style recursion) to any depth the limit allows. It implements [spec-0.3.0](https://github.com/datumesh-com/datumesh-spec) on [`datumesh-store`](https://crates.io/crates/datumesh-store) 0.3.0 and [`datumesh-core`](https://crates.io/crates/datumesh-core) 0.3.3. Function languages plug in through `Runtime`; HTTP is not part of it.
 
 ## Example
 
 ```toml
 [dependencies]
-datumesh-engine = "0.1.0"
-datumesh-store = "0.2.0"
-datumesh-core = { version = "0.3.2", features = ["sign"] }
+datumesh-engine = "0.2.0"
+datumesh-store = "0.3.0"
+datumesh-core = { version = "0.3.3", features = ["sign"] }
 ```
 
 A publisher's two stored functions (net price and tax per item), a computed function adding them in a toy language `sum`, its runtime, and the engine answering the computed cell; the receipt it signs then verifies at level `recomputed` with the engine as the resolver:
@@ -119,13 +119,13 @@ It prints `total = 120 as of 2026-03-02T09:00:00.000000Z, tx 2026-03-02T09:00:00
 ## What it does
 
 - **Answering as of A.** A receipt answers as of A only when its `tx` and its `asof` are both at or before A. Stored cell: `stored_asof(cell, A)`, the publisher's bytes unchanged. Computed cell: the computed version with the greatest `asof <= A`, validated as of A; when none validates, the function is evaluated and a receipt signed (or the version kept, when the value is the same). No asof: the clock reading at the start of the request (also the `issued` of what it signs). Names resolve as of A, the function's and its inputs'. `get_cell` takes a cell with its function hash pinned.
-- **Computed receipts.** `computed_by` = `<mesh host>#<key id>`; `inputs` = the receipts read; `tx` = the latest input `tx`; `asof` = the latest input `asof` (SPEC 8.2 rule 2), later only where needed for the receipt to hold as of its own `asof` (an input kept across a change of its own inputs; a name bound after it). One receipt per version, keyed on (cell, `tx`, `asof`), stored with `put_computed`, never in `versions`; historical requests add older versions (backfill). `licence` and `summary` come from the engine's configuration.
+- **Computed receipts.** `computed_by` = `<mesh host>#<key id>`; `inputs` = the receipts read; `tx` = the latest input `tx`; `asof` = the latest of its input asofs and the start of every name binding it relied on (the names read, transitively; from `resolve_binding`), so that it holds, and recomputes, as of its own `asof` (an input kept across a change of its own inputs counts from where its value is known again). One receipt per version, keyed on (cell, `tx`, `asof`), stored with `put_computed`, never in `versions`; historical requests add older versions (backfill). `licence` and `summary` come from the engine's configuration.
 - **Receipt identity.** Two valid receipts for the same value may exist with different lineage (an input that changes and changes back: early cutoff can accept either version). After a backdated correction (an input superseded at a `tx` earlier than the receipt's `tx`), the old receipt stays signature-valid and answers the asofs it was issued for, but no longer recomputes: it is historical, not wrong. The crate documentation has the details.
 - **Memo and early cutoff.** A version is valid as of A when each input gives the same receipt or the same value. The memo keeps answers with the interval they hold for; `stored_version_added` (call it when a stored version is added) drops the answers that rest on the cell, and the unchanged ones are rechecked from memory. The memo is an optimisation: losing it (a restart) costs work, not correctness; early-cutoff records need not be persisted.
 - **Recursion.** An explicit stack; a read of an input not computed yet suspends the function (`EvalError::Suspended`), which is run again once the input is answered. `Cycle`, a depth limit (default 10,000; a 100,000-deep chain runs on a 2 MiB thread under a raised one).
 - **Budget.** Fuel per request (runtime steps plus input reads, default 10,000,000); `BudgetExceeded` stores nothing.
 - **Single-flight.** Evaluations run one at a time per engine: concurrent requests for one uncomputed cell evaluate it once. Memoised and stored answers do not wait.
-- **Resolver.** `Engine` is a time-aware `datumesh_core::Resolver` with the same answering rule; computed cells are evaluated, never read back from their own receipts. The core's test kit passes except at the one point where its tx-only rule differs (a late-signed version as of its tx), as `tests/conformance.rs` pins.
+- **Resolver.** `Engine` is a time-aware `datumesh_core::Resolver` with the same answering rule; computed cells are evaluated, never read back from their own receipts. The core's test kit passes every check under its default answering rule `TxAndAsof` (`tests/conformance.rs`).
 
 The crate documentation describes the `Runtime` and `Inputs` contract for function languages and the `get` contract for an HTTP layer (answers, errors, envelope outcomes). The API is synchronous; `Engine` is `Send + Sync`. Dependencies: `datumesh-core` (feature `sign`), `datumesh-store`, and `tracing` (failures that `Resolver::evaluate` turns into `None`, and computed-version conflicts, at target `datumesh_engine`). No `unsafe`, no panics on any input, no global state, no network, no file but the configured key file.
 
@@ -133,7 +133,7 @@ Feature `native-test`: `native_test::NativeTest`, a runtime of Rust closures key
 
 ## Development
 
-With a PostgreSQL 16 server whose role may create databases in `DATABASE_URL`, `cargo test --all-features` runs everything (each test in a database of its own). `tools/cargo.sh <toolchain> <args>` runs cargo in a `rust:<toolchain>` container next to a `datumesh-pg` container; `tools/package_test.sh` is the packaging test; `tools/public_api.sh` regenerates `public-api.txt` and `public-api-all-features.txt` (`cargo public-api`); `tools/crosscheck.sh` verifies every receipt the test suite signs with the Python and JavaScript verifiers (`datumesh` 0.3.0, `@datumesh/verify` 0.3.0) at level signed.
+With a PostgreSQL 16 server whose role may create databases in `DATABASE_URL`, `cargo test --all-features` runs everything (each test in a database of its own, all on `PgStore`; the 100,000-deep chain of `tests/recursion.rs` takes about 8 minutes of it). `tools/cargo.sh <toolchain> <args>` runs cargo in a `rust:<toolchain>` container next to a `datumesh-pg` container; `tools/package_test.sh` is the packaging test; `tools/public_api.sh` regenerates `public-api.txt` and `public-api-all-features.txt` (`cargo public-api`); `tools/crosscheck.sh` verifies every receipt the test suite signs with the Python and JavaScript verifiers (`datumesh` 0.3.0, `@datumesh/verify` 0.3.0) at level signed.
 
 ## Benchmark
 

@@ -2,7 +2,8 @@
 # The library's public API (`cargo public-api -ss`, which needs a nightly toolchain and
 # cargo-public-api 0.52): public-api.txt with default features, public-api-all-features.txt
 # with --all-features (native-test adds the module native_test); each compared with the
-# file, or written with --write.
+# file, or written with --write. Plain output whatever CARGO_TERM_COLOR says (CI sets
+# it to always): --color=never.
 #
 #   tools/public_api.sh [--write]            in the datumesh-nightly-tools image (tools/cargo.sh)
 #   tools/public_api.sh --native [--write]   with the local cargo (CI: nightly-2026-10-22)
@@ -18,9 +19,9 @@ trap 'rm -rf "$work"' EXIT
 
 api() {
   if $native; then
-    (cd "$root" && cargo public-api -ss "$@")
+    (cd "$root" && cargo public-api -ss --color=never "$@")
   else
-    "$root/tools/cargo.sh" nightly-tools public-api -ss "$@"
+    "$root/tools/cargo.sh" nightly-tools public-api -ss --color=never "$@"
   fi
 }
 api > "$work/default.txt"

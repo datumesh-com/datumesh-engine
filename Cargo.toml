@@ -1,6 +1,6 @@
 [package]
 name = "datumesh-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "The Datumesh engine: the value of a cell as of a time, from stored receipts or by evaluating functions; memoised, and signed for computed cells."
 edition = "2021"
 rust-version = "1.97"

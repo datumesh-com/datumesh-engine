@@ -1,7 +1,7 @@
 #!/bin/sh
 # Packaging test: `cargo package`, unpack the .crate in a fresh directory, build a new
-# project that depends on the packaged datumesh-engine and on datumesh-store 0.2.0 and
-# datumesh-core 0.3.2 from crates.io, and run the README example against PostgreSQL 16 in
+# project that depends on the packaged datumesh-engine and on datumesh-store 0.3.0 and
+# datumesh-core 0.3.3 from crates.io, and run the README example against PostgreSQL 16 in
 # a database of its own (empty: the example makes the schema), twice (it is idempotent).
 # The packaged crate must carry no test material.
 #
@@ -40,7 +40,7 @@ fi
 mkdir -p "$work/app/src"
 # The README's first ```rust block is the example.
 awk '/^```rust$/{f=1;next} /^```$/{if(f){exit}} f' "$root/README.md" > "$work/app/src/main.rs"
-printf '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\ndatumesh-engine = { path = "../datumesh-engine-%s" }\ndatumesh-store = "0.2.0"\ndatumesh-core = { version = "0.3.2", features = ["sign"] }\n' "$version" > "$work/app/Cargo.toml"
+printf '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\ndatumesh-engine = { path = "../datumesh-engine-%s" }\ndatumesh-store = "0.3.0"\ndatumesh-core = { version = "0.3.3", features = ["sign"] }\n' "$version" > "$work/app/Cargo.toml"
 
 psql_admin "CREATE DATABASE $db"
 trap 'psql_admin "DROP DATABASE IF EXISTS $db WITH (FORCE)"; rm -rf "$work"' EXIT

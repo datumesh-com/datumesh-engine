@@ -356,6 +356,10 @@ impl<'e> Req<'e> {
         let result = rt.evaluate(&f.desc, &f.cell, &mut reader, &mut budget);
         let Reader { read, names, stop, .. } = reader;
         let fail = |e: EvalError| engine_error(e, &f.id);
+        // Exhaustion wins over anything the runtime made of it.
+        if budget.is_exhausted() {
+            return Err(EngineError::BudgetExceeded { fuel: budget.limit() });
+        }
         match stop {
             Some(Stop::Pending(cell, id, desc)) => return Ok(Step::Push(cell, id, desc)),
             Some(Stop::NotCovered) => return Ok(Step::Done(Done::NotCovered)),

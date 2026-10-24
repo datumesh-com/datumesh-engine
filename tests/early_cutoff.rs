@@ -182,10 +182,10 @@ fn after_a_cutoff_the_unchanged_readers_are_rechecked_from_memory() {
     assert_eq!(common::wire::matching(&sql, "FROM computed_versions"), 1, "only the child's: {sql:#?}");
     assert_eq!(common::wire::matching(&sql, "FROM versions"), 2, "s's version and those after it: {sql:#?}");
     assert_eq!(common::wire::matching(&sql, "INSERT"), 0, "{sql:#?}");
-    // And the names: the top's, then each one read (p19 .. p1, the child, s), once each, and
-    // s's again as of the kept child's asof (whether its binding held then).
-    assert_eq!(common::wire::matching(&sql, "FROM name_bindings"), 23, "{sql:#?}");
-    assert_eq!(sql.values().sum::<usize>(), 26, "nothing else: {sql:#?}");
+    // And the names: the top's, then each one read (p19 .. p1, the child, s), once each (each
+    // binding comes with its start: no other name query).
+    assert_eq!(common::wire::matching(&sql, "FROM name_bindings"), 22, "{sql:#?}");
+    assert_eq!(sql.values().sum::<usize>(), 25, "nothing else: {sql:#?}");
     assert_eq!(e.memo_stats().stale, 0);
     w.verify_all_issued(&e, "early_cutoff_recheck");
 }

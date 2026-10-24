@@ -49,9 +49,9 @@ fn fib_90_is_exact_and_every_fib_k_is_a_memoised_cell() {
     // answered on the way).
     assert_eq!(w.calls(FIB), 2 + 3 + 2 * 88);
     // fib(0) and fib(1) read nothing: tx and asof are the earliest instant. Above them the
-    // name fib is read, which was not bound then: asof is the request's (NOW), tx stays the
-    // latest input tx.
-    assert_eq!((r.tx(), r.asof()), (MIN_INSTANT, NOW));
+    // name fib is read, which was bound only then: asof is the start of that binding, tx
+    // stays the latest input tx.
+    assert_eq!((r.tx(), r.asof()), (MIN_INSTANT, BIND_TX));
     w.reset_calls();
     for k in [0, 1, 2, 45, 89, 90] {
         let a = receipt_of(&e.get(&fib(k), None).unwrap());
@@ -69,6 +69,48 @@ fn fib_90_is_exact_and_every_fib_k_is_a_memoised_cell() {
     assert_eq!(receipt_of(&fresh.get(&fib(90), None).unwrap()).hash(), r.hash());
     assert_eq!(w.calls(FIB), 0);
     assert_eq!(w.verify_all_issued(&e, "recursion_fib"), 91);
+}
+
+#[test]
+fn fib_above_its_base_cases_answers_from_the_start_of_its_names_binding() {
+    // fib(0) and fib(1) are known for all time (asof the earliest instant); fib(10) relies on
+    // the name fib, bound at BIND_TX. Asked as of two different instants after the binding,
+    // it is one receipt, one computed version, whose asof is the binding's start; it
+    // recomputes there; a fresh engine validates it as of a later instant still.
+    let mut w = World::new();
+    fib_world(&mut w);
+    let e = w.engine();
+    let fib = |k: u32| w.cellref(FIB, &[("n", num(&k.to_string()))]);
+    let first = receipt_of(&e.get(&fib(10), Some("2024-05-01T00:00:00.000000Z")).unwrap());
+    let fresh = w.engine();
+    let second = receipt_of(&fresh.get(&fib(10), Some("2025-09-01T00:00:00.000000Z")).unwrap());
+    assert_eq!(first.value(), &num("55"));
+    assert_eq!(second.hash(), first.hash(), "one receipt");
+    assert_eq!((first.tx(), first.asof()), (MIN_INSTANT, BIND_TX), "asof: the start of fib's binding");
+    let versions: i64 = w
+        .db()
+        .client()
+        .query_one("SELECT count(*) FROM computed_versions WHERE cell_id = $1", &[&first.cell().id()])
+        .unwrap()
+        .get(0);
+    assert_eq!(versions, 1, "one computed version");
+    for k in [0, 1] {
+        let base = receipt_of(&e.get(&fib(k), Some("2024-05-01T00:00:00.000000Z")).unwrap());
+        assert_eq!((base.tx(), base.asof()), (MIN_INSTANT, MIN_INSTANT), "fib({k}) relies on no name");
+    }
+    // It recomputes at its asof: the value there, and through verify.
+    use datumesh_core::Resolver;
+    assert_eq!(e.evaluate(first.cell(), BIND_TX).as_ref(), Some(first.value()));
+    let out = datumesh_core::verify(&w.stored_bytes(first.hash()), &all_keys(), Some(&*fresh as &dyn Resolver), None);
+    assert_eq!(out.level, Some(datumesh_core::Level::Recomputed), "{out:?}");
+    // Validation at a later asof accepts it: a fresh engine, no runtime call.
+    w.reset_calls();
+    let later = w.engine().get(&fib(10), Some("2026-06-01T00:00:00.000000Z")).unwrap();
+    assert_eq!(receipt_of(&later).hash(), first.hash());
+    assert_eq!(w.calls(FIB), 0);
+    // Before the binding the name means nothing.
+    assert_eq!(e.get(&fib(10), Some("2019-12-31T23:59:59.999999Z")).unwrap(), Answer::NotCovered);
+    w.verify_all_issued(&e, "recursion_fib_binding");
 }
 
 #[test]

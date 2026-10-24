@@ -205,10 +205,11 @@ fn without_a_memo_every_request_validates_through_the_store() {
 }
 
 #[test]
-fn an_input_name_bound_after_the_inputs_asof_makes_the_receipt_answer_from_the_request() {
+fn an_input_name_bound_after_the_inputs_asof_makes_the_receipt_answer_from_the_binding() {
     // late(x) has a version recorded on the 15th, but its name is bound only on the 18th:
     // as of the 15th, reading "rates.example.org/late" finds nothing, so a receipt reading it
-    // cannot answer as of the 15th (it would not recompute there).
+    // cannot answer as of the 15th (it would not recompute there), but it can from the 18th,
+    // when the binding it relied on began.
     let mut w = World::new();
     const LATE: &str = "rates.example.org/late";
     let h = w.store.put_descriptor(&descriptor("stored", "", &[], &[])).unwrap();
@@ -221,19 +222,35 @@ fn an_input_name_bound_after_the_inputs_asof_makes_the_receipt_answer_from_the_r
         let v = i.read(LATE, &args(&[]))?;
         Ok(add(&v, &v))
     });
+    w.native_fn("calc.example.net/triple", &[LATE], &[], |_, i, _| {
+        let v = i.read(LATE, &args(&[]))?;
+        Ok(add(&add(&v, &v), &v))
+    });
     let e = w.engine();
     let r = w.cellref("calc.example.net/double", &[]);
     let a = receipt_of(&e.get(&r, Some(&t(20, 0))).unwrap());
     assert_eq!(a.value(), &num("10"));
     assert_eq!(a.tx(), t(15, 0), "tx is still the latest input tx");
-    assert_eq!(a.asof(), t(20, 0), "asof: the request's, at which the name is known");
-    // Later asofs reuse it; before the binding the input's name resolves to nothing.
+    assert_eq!(a.asof(), t(18, 0), "asof: the start of the input name's binding");
+    // Asked between the binding and the 20th, and later: the same receipt, from the memo and
+    // from a fresh engine validating the stored version.
+    assert_eq!(receipt_of(&e.get(&r, Some(&t(18, 0))).unwrap()).hash(), a.hash());
+    assert_eq!(receipt_of(&w.engine().get(&r, Some(&t(19, 0))).unwrap()).hash(), a.hash());
     assert_eq!(receipt_of(&w.engine().get(&r, Some(&t(25, 0))).unwrap()).hash(), a.hash());
+    // Before the binding the input's name resolves to nothing.
     match e.get(&r, Some(&t(17, 0))) {
         Err(EngineError::NameUnresolved { fn_name, asof }) => assert_eq!((fn_name.as_str(), asof), (LATE, t(17, 0))),
         other => panic!("{other:?}"),
     }
-    // One evaluation for the 20th; the 25th reused it; the 17th's ran and failed.
+    // One evaluation for the 20th; the others reused it; the 17th's ran and failed.
     assert_eq!(w.calls("calc.example.net/double"), 2);
+    assert_eq!(w.db().count("computed_versions"), 1);
+    // The name bound again, to the same function, on the 22nd: a binding that begins again.
+    // A receipt first computed after it answers from the 22nd; double's earlier version
+    // still validates (the name means the same function).
+    w.store.bind_name(LATE, &h, &t(22, 0)).unwrap();
+    let triple = receipt_of(&e.get(&w.cellref("calc.example.net/triple", &[]), Some(&t(23, 0))).unwrap());
+    assert_eq!((triple.value(), triple.tx(), triple.asof()), (&num("15"), t(15, 0).as_str(), t(22, 0).as_str()));
+    assert_eq!(receipt_of(&w.engine().get(&r, Some(&t(23, 0))).unwrap()).hash(), a.hash());
     w.verify_all_issued(&e, "memo_late_binding");
 }

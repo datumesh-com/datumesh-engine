@@ -85,6 +85,7 @@ fn budget_exceeded_stores_nothing() {
     let rich = w.engine();
     assert_eq!(receipt_of(&rich.get(&fib, None).unwrap()).value(), &num("102334155"));
     assert_eq!(rows(&w)[1], before[1] + 41);
+    w.verify_all_issued(&rich, "budget_fib");
 }
 
 #[test]

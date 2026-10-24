@@ -128,6 +128,7 @@ fn licence_and_summary_come_from_the_engine_configuration() {
     let r = receipt_of(&e.get(&w.cellref(TOTAL, &[("item", text("nut"))]), Some(&t(20, 0))).unwrap());
     assert_eq!(r.licence(), "https://example.com/licence");
     assert_eq!(r.summary(), "Total for nut.");
+    w.verify_all_issued(&e, "computed_licence");
 }
 
 #[test]

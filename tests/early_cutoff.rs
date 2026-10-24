@@ -97,6 +97,12 @@ fn a_backdated_correction_is_answered_and_its_receipt_reused() {
     assert_eq!(w.db().count("receipts"), receipts);
     let out = datumesh_core::verify(&w.stored_bytes(new.hash()), &all_keys(), Some(&*e as &dyn Resolver), None);
     assert_eq!(out.level, Some(datumesh_core::Level::Recomputed), "{out:?}");
+    // The old receipt no longer recomputes: the correction rewrote b's history as of the
+    // 10th. It verified when it was made; now its value as of its own asof is another.
+    let out = datumesh_core::verify(&w.stored_bytes(old.hash()), &all_keys(), Some(&*e as &dyn Resolver), None);
+    assert_eq!(out.code, Some(datumesh_core::ErrorCode::ValueMismatch), "{out:?}");
+    assert_eq!(w.issued_receipts().len(), 2);
+    dump("early_cutoff_backdated", &w.issued_receipts());
 }
 
 #[test]

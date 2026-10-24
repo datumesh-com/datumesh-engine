@@ -58,6 +58,7 @@ fn two_threads_getting_the_same_uncomputed_cell_evaluate_it_once() {
     }
     assert_eq!(w.calls("calc.example.net/slow"), 1, "one evaluation");
     assert_eq!(w.db().count("computed_versions"), 1, "one stored version");
+    w.verify_all_issued(&e, "concurrency_single_flight");
 }
 
 /// child = 1 if s1 >= 10 else 0; top = child + s2.

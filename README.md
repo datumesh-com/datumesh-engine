@@ -137,21 +137,21 @@ With a PostgreSQL 16 server whose role may create databases in `DATABASE_URL`, `
 
 ## Benchmark
 
-`examples/bench.rs` (`cargo run --release --features native-test --example bench`), against PostgreSQL 16 with default settings on the development host (6 vCPU, 15 GB RAM, `synchronous_commit` on), one call at a time; the full run is in `bench/results/2026-10-24.md`:
+`examples/bench.rs` (`cargo run --release --features native-test --example bench`), against PostgreSQL 16 with default settings on the development host (6 vCPU, 15 GB RAM, `synchronous_commit` on), one call at a time; the full run is in `bench/results/2026-10-24-0.2.0.md` (0.1.0's in `bench/results/2026-10-24.md`):
 
 | Operation | p50 | p99 |
 |---|---:|---:|
-| warm `get` stored, by reference (resolving the name: 1 query) | 191 µs | 414 µs |
-| warm `get_cell` stored (pinned: no query) | 5.2 µs | 18 µs |
-| warm `get` computed, by reference (2 name queries) | 364 µs | 691 µs |
-| warm `get_cell` computed (1 name query) | 200 µs | 405 µs |
-| cold `get` computed, first ever (sign, `put_receipt`, `put_computed`) | 6.0 ms | 12.1 ms |
-| `get` computed, empty memo, version in the store (validated) | 2.0 ms | 3.4 ms |
-| cold `get` of a diamond (4 computed cells) | 27 ms | 32 ms |
-| cold `get` of a 1,000-deep chain | 5.81 s | 5.83 s |
-| signing one receipt | 272 µs | 492 µs |
-| storing one receipt (`put_receipt` verifies it) | 2.6 ms | 3.8 ms |
+| warm `get` stored, by reference (resolving the name: 1 query) | 173 µs | 371 µs |
+| warm `get_cell` stored (pinned: no query) | 5.3 µs | 16 µs |
+| warm `get` computed, by reference (2 name queries) | 373 µs | 757 µs |
+| warm `get_cell` computed (1 name query) | 182 µs | 367 µs |
+| cold `get` computed, first ever (sign, `put_receipt`, `put_computed`) | 5.5 ms | 12.9 ms |
+| `get` computed, empty memo, version in the store (validated) | 1.6 ms | 3.6 ms |
+| cold `get` of a diamond (4 computed cells) | 20 ms | 26 ms |
+| cold `get` of a 1,000-deep chain | 4.53 s | 4.63 s |
+| signing one receipt | 274 µs | 494 µs |
+| storing one receipt (`put_receipt` verifies it) | 2.8 ms | 4.2 ms |
 
-A 10,000-cell graph (100 layers of 100, each cell reading two below): built cold in 59 s; one correction of a stored input under it, until the next `get` of the top is correct: 29 s when the change propagates (about 5,000 cells recomputed, signed and stored), 162 ms when early cutoff stops it at the first layer (the rest rechecked from memory). The memo then holds 10,101 answers in about 27 MB (2.7 KB each, the receipt's bytes included); the dirty set is empty at rest (it keeps marks only while an evaluation that began before them runs).
+A 10,000-cell graph (100 layers of 100, each cell reading two below): built cold in 50 s; one correction of a stored input under it, until the next `get` of the top is correct: 27 s when the change propagates (about 5,000 cells recomputed, signed and stored), 212 ms when early cutoff stops it at the first layer (the rest rechecked from memory). The memo then holds 10,101 answers in about 27 MB (2.7 KB each, the receipt's bytes included); the dirty set is empty at rest (it keeps marks only while an evaluation that began before them runs).
 
 Licensed under Apache-2.0.

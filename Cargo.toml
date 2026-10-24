@@ -66,3 +66,7 @@ required-features = ["native-test"]
 [[test]]
 name = "concurrency"
 required-features = ["native-test"]
+
+[[test]]
+name = "conformance"
+required-features = ["native-test"]

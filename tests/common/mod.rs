@@ -414,8 +414,8 @@ impl Runtime for SharedNative {
     }
 }
 
-/// Appends receipts to `$DATUMESH_ENGINE_DUMP/<test>.jsonl`, each line
-/// `{"keys": {host: key document text}, "receipt": receipt text}`.
+/// Writes receipts to `$DATUMESH_ENGINE_DUMP/<test>.jsonl`, each line
+/// `{"hash": receipt hash, "keys": {host: key document text}, "receipt": receipt text}`.
 pub fn dump(test: &str, receipts: &[Vec<u8>]) {
     let Ok(dir) = std::env::var("DATUMESH_ENGINE_DUMP") else { return };
     if dir.is_empty() {
@@ -431,6 +431,7 @@ pub fn dump(test: &str, receipts: &[Vec<u8>]) {
             })
             .collect();
         let line = Value::Object(vec![
+            ("hash".into(), Value::String(Receipt::from_json(bytes).unwrap().hash().to_string())),
             ("keys".into(), Value::Object(keys)),
             ("receipt".into(), Value::String(String::from_utf8(bytes.clone()).unwrap())),
         ]);

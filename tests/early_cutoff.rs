@@ -98,3 +98,36 @@ fn a_backdated_correction_is_answered_and_its_receipt_reused() {
     let out = datumesh_core::verify(&w.stored_bytes(new.hash()), &all_keys(), Some(&*e as &dyn Resolver), None);
     assert_eq!(out.level, Some(datumesh_core::Level::Recomputed), "{out:?}");
 }
+
+#[test]
+fn a_kept_version_counts_from_when_its_value_is_known_again() {
+    // child = 1 if s >= 10 else 0; top = child + u. The child is 1 from the 10th, 0 from the
+    // 12th (nobody asks), 1 again from the 14th. u changes on the 13th. Asked on the 16th,
+    // the child keeps its version of the 10th (its value is 1 again), but that version's
+    // value did not hold on the 13th: top's new receipt must not answer as of the 13th,
+    // where its value was 0 + 5, but from the 14th, where the child is known to be 1 again.
+    let mut w = World::new();
+    w.stored_fn(S, &[]);
+    w.stored_fn("rates.example.org/u", &[]);
+    w.native_fn(CHILD, &[S], &[], |_, i, _| Ok(num(if int(&i.read(S, &args(&[]))?) >= 10 { "1" } else { "0" })));
+    w.native_fn("calc.example.net/top", &[CHILD, "rates.example.org/u"], &[], |_, i, _| {
+        Ok(add(&i.read(CHILD, &args(&[]))?, &i.read("rates.example.org/u", &args(&[]))?))
+    });
+    let e = w.engine();
+    let s = w.cell(S, &[]);
+    let u = w.cell("rates.example.org/u", &[]);
+    let top = w.cellref("calc.example.net/top", &[]);
+    w.publish(&s, "12", &t(10, 0));
+    w.publish(&u, "0", &t(10, 6));
+    assert_eq!(receipt_of(&e.get(&top, Some(&t(11, 0))).unwrap()).value(), &num("1"));
+    w.publish(&s, "4", &t(12, 0));
+    w.publish(&u, "5", &t(13, 0));
+    w.publish(&s, "15", &t(14, 0));
+    let r = receipt_of(&e.get(&top, Some(&t(16, 0))).unwrap());
+    assert_eq!(r.value(), &num("6"));
+    assert_eq!(r.asof(), t(14, 0), "from when the kept child is known to be 1 again");
+    assert_eq!(r.tx(), t(13, 0), "tx is still the latest input tx");
+    // As of the 13th the value was 5, and the engine says so.
+    assert_eq!(receipt_of(&w.engine().get(&top, Some(&t(13, 12))).unwrap()).value(), &num("5"));
+    w.verify_all_issued(&w.engine(), "early_cutoff_kept");
+}

@@ -115,11 +115,13 @@ impl<'e> Req<'e> {
         }
     }
 
-    /// The asof of a new receipt: the latest input asof (SPEC 8.2 rule 2), when every function
+    /// The asof of a new receipt, from `latest`, the latest instant from which every input's
+    /// answer holds (the latest input asof, SPEC 8.2 rule 2, unless an input is a version
+    /// kept or validated across a change of its own inputs): `latest` when every function
     /// name the value depends on resolved then as it does as of the request's asof, so that
     /// the receipt's value is the cell's value as of its own asof and recomputes there.
-    /// Otherwise (a name bound, or rebound, after the latest input asof: the store does not
-    /// say when a binding began) the request's asof, at which the names are known.
+    /// Otherwise (a name bound, or rebound, after it: the store does not say when a binding
+    /// began) the request's asof, at which the names are known.
     fn knowable_asof(&mut self, latest: String, names: &BTreeMap<String, String>) -> Result<String, EvalError> {
         if latest == self.asof {
             return Ok(latest);
@@ -411,7 +413,11 @@ impl<'e> Req<'e> {
     ) -> Result<Arc<Ans>, EngineError> {
         let tx = read.values().map(|a| a.tx.as_str()).max().unwrap_or(MIN_INSTANT).to_string();
         let names = merge_names(read.values(), own_names);
-        let latest = read.values().map(|a| a.asof.as_str()).max().unwrap_or(MIN_INSTANT).to_string();
+        // Each input's answer holds from its `lo` on (its receipt's asof, or later when the
+        // answer is a version validated or kept across a change of its own inputs: its value
+        // was not established in between). The latest of these, not of the receipts' asofs,
+        // is where this value is known: SPEC 8.2 rule 2 when no input was kept.
+        let latest = read.values().map(|a| a.lo.as_str()).max().unwrap_or(MIN_INSTANT).to_string();
         let asof = self.knowable_asof(latest, &names).map_err(|e| engine_error(e, &f.id))?;
         let lo = read.values().map(|a| a.lo.as_str()).chain(std::iter::once(asof.as_str())).max().unwrap_or(MIN_INSTANT).to_string();
         let hi = read.values().filter_map(|a| a.hi.clone()).min();

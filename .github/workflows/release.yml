@@ -1,0 +1,51 @@
+name: release
+
+# Publishes datumesh-engine to crates.io when a tag v<version> is pushed: the test workflow
+# must pass and the tag must equal the crate's version. Authentication is crates.io Trusted
+# Publishing (OIDC); no long-lived token is stored. A version already on crates.io is
+# skipped rather than failing the run.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: tag equals the crate's version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          v="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          echo "tag $GITHUB_REF_NAME, datumesh-engine $v"
+          test "$tag" = "$v"
+
+  publish:
+    needs: [test, version]
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install 1.99 --profile minimal && rustup default 1.99
+      - name: version already published
+        id: published
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          code="$(curl -s -o /dev/null -w '%{http_code}' -A 'datumesh-engine release (github.com/datumesh-com/datumesh-engine)' "https://crates.io/api/v1/crates/datumesh-engine/$v")"
+          if [ "$code" = 200 ]; then out=true; else out=false; fi
+          echo "datumesh-engine $v published: $out"
+          echo "datumesh_engine=$out" >> "$GITHUB_OUTPUT"
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+        if: steps.published.outputs.datumesh_engine != 'true'
+      - run: cargo publish --locked
+        if: steps.published.outputs.datumesh_engine != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

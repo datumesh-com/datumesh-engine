@@ -1,0 +1,180 @@
+pub mod datumesh_engine
+pub enum datumesh_engine::Answer
+pub datumesh_engine::Answer::NotCovered
+pub datumesh_engine::Answer::Receipt(alloc::vec::Vec<u8>)
+impl core::clone::Clone for datumesh_engine::Answer
+pub fn datumesh_engine::Answer::clone(&self) -> Self
+impl core::cmp::Eq for datumesh_engine::Answer
+impl core::cmp::PartialEq for datumesh_engine::Answer
+pub fn datumesh_engine::Answer::eq(&self, &Self) -> bool
+impl core::fmt::Debug for datumesh_engine::Answer
+pub fn datumesh_engine::Answer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for datumesh_engine::Answer
+#[non_exhaustive] pub enum datumesh_engine::ConfigError
+pub datumesh_engine::ConfigError::Host(datumesh_core::error::Error)
+pub datumesh_engine::ConfigError::KeyFile(alloc::string::String)
+pub datumesh_engine::ConfigError::KeyNotPublished
+pub datumesh_engine::ConfigError::KeyNotPublished::host: alloc::string::String
+pub datumesh_engine::ConfigError::KeyNotPublished::key_id: alloc::string::String
+pub datumesh_engine::ConfigError::Licence(datumesh_core::error::Error)
+pub datumesh_engine::ConfigError::NoSigningKey
+pub datumesh_engine::ConfigError::Runtime(alloc::string::String)
+pub datumesh_engine::ConfigError::Store(datumesh_engine::StoreError)
+impl core::error::Error for datumesh_engine::ConfigError
+pub fn datumesh_engine::ConfigError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for datumesh_engine::ConfigError
+pub fn datumesh_engine::ConfigError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for datumesh_engine::ConfigError
+pub fn datumesh_engine::ConfigError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum datumesh_engine::EngineError
+pub datumesh_engine::EngineError::BudgetExceeded
+pub datumesh_engine::EngineError::BudgetExceeded::fuel: u64
+pub datumesh_engine::EngineError::Cycle
+pub datumesh_engine::EngineError::Cycle::cell_id: alloc::string::String
+pub datumesh_engine::EngineError::DepthExceeded
+pub datumesh_engine::EngineError::DepthExceeded::limit: usize
+pub datumesh_engine::EngineError::Invalid(datumesh_core::error::Error)
+pub datumesh_engine::EngineError::NameUnresolved
+pub datumesh_engine::EngineError::NameUnresolved::asof: alloc::string::String
+pub datumesh_engine::EngineError::NameUnresolved::fn_name: alloc::string::String
+pub datumesh_engine::EngineError::NoRuntime
+pub datumesh_engine::EngineError::NoRuntime::fn_hash: alloc::string::String
+pub datumesh_engine::EngineError::NoRuntime::lang: alloc::string::String
+pub datumesh_engine::EngineError::Runtime
+pub datumesh_engine::EngineError::Runtime::cell_id: alloc::string::String
+pub datumesh_engine::EngineError::Runtime::message: alloc::string::String
+pub datumesh_engine::EngineError::Sign(datumesh_core::error::Error)
+pub datumesh_engine::EngineError::Store(datumesh_engine::StoreError)
+pub datumesh_engine::EngineError::UndeclaredInput
+pub datumesh_engine::EngineError::UndeclaredInput::fn_name: alloc::string::String
+impl core::clone::Clone for datumesh_engine::EngineError
+pub fn datumesh_engine::EngineError::clone(&self) -> Self
+impl core::convert::From<datumesh_engine::StoreError> for datumesh_engine::EngineError
+pub fn datumesh_engine::EngineError::from(datumesh_engine::StoreError) -> datumesh_engine::EngineError
+impl core::error::Error for datumesh_engine::EngineError
+pub fn datumesh_engine::EngineError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for datumesh_engine::EngineError
+pub fn datumesh_engine::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for datumesh_engine::EngineError
+pub fn datumesh_engine::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum datumesh_engine::EvalError
+pub datumesh_engine::EvalError::BudgetExceeded
+pub datumesh_engine::EvalError::BudgetExceeded::fuel: u64
+pub datumesh_engine::EvalError::Cycle
+pub datumesh_engine::EvalError::Cycle::cell_id: alloc::string::String
+pub datumesh_engine::EvalError::DepthExceeded
+pub datumesh_engine::EvalError::DepthExceeded::limit: usize
+pub datumesh_engine::EvalError::InputNotCovered
+pub datumesh_engine::EvalError::InputNotCovered::cell_id: alloc::string::String
+pub datumesh_engine::EvalError::InvalidInput(datumesh_core::error::Error)
+pub datumesh_engine::EvalError::NameUnresolved
+pub datumesh_engine::EvalError::NameUnresolved::asof: alloc::string::String
+pub datumesh_engine::EvalError::NameUnresolved::fn_name: alloc::string::String
+pub datumesh_engine::EvalError::NoRuntime
+pub datumesh_engine::EvalError::NoRuntime::lang: alloc::string::String
+pub datumesh_engine::EvalError::Runtime(alloc::string::String)
+pub datumesh_engine::EvalError::Store(datumesh_engine::StoreError)
+pub datumesh_engine::EvalError::Suspended
+pub datumesh_engine::EvalError::UndeclaredInput
+pub datumesh_engine::EvalError::UndeclaredInput::fn_name: alloc::string::String
+impl core::clone::Clone for datumesh_engine::EvalError
+pub fn datumesh_engine::EvalError::clone(&self) -> Self
+impl core::error::Error for datumesh_engine::EvalError
+pub fn datumesh_engine::EvalError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for datumesh_engine::EvalError
+pub fn datumesh_engine::EvalError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for datumesh_engine::EvalError
+pub fn datumesh_engine::EvalError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct datumesh_engine::Budget
+impl datumesh_engine::Budget
+pub fn datumesh_engine::Budget::charge(&mut self, u64) -> core::result::Result<(), datumesh_engine::EvalError>
+pub fn datumesh_engine::Budget::is_exhausted(&self) -> bool
+pub fn datumesh_engine::Budget::limit(&self) -> u64
+pub fn datumesh_engine::Budget::new(u64) -> datumesh_engine::Budget
+pub fn datumesh_engine::Budget::remaining(&self) -> u64
+impl core::fmt::Debug for datumesh_engine::Budget
+pub fn datumesh_engine::Budget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct datumesh_engine::Engine
+impl datumesh_engine::Engine
+pub fn datumesh_engine::Engine::builder(alloc::rcs::arc::Arc<(dyn datumesh_store::Store + core::marker::Send + core::marker::Sync)>, impl core::convert::Into<alloc::string::String>) -> datumesh_engine::EngineBuilder
+pub fn datumesh_engine::Engine::clear_memo(&self)
+pub fn datumesh_engine::Engine::get(&self, &datumesh_core::model::CellRef, core::option::Option<&str>) -> core::result::Result<datumesh_engine::Answer, datumesh_engine::EngineError>
+pub fn datumesh_engine::Engine::get_cell(&self, &datumesh_core::model::Cell, core::option::Option<&str>) -> core::result::Result<datumesh_engine::Answer, datumesh_engine::EngineError>
+pub fn datumesh_engine::Engine::memo_stats(&self) -> datumesh_engine::MemoStats
+pub fn datumesh_engine::Engine::stored_version_added(&self, &str)
+impl core::fmt::Debug for datumesh_engine::Engine
+pub fn datumesh_engine::Engine::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl datumesh_core::verify::Resolver for datumesh_engine::Engine
+pub fn datumesh_engine::Engine::descriptor(&self, &str) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>
+pub fn datumesh_engine::Engine::evaluate(&self, &datumesh_core::model::Cell, &str) -> core::option::Option<datumesh_core::model::Scalar>
+pub fn datumesh_engine::Engine::receipt(&self, &str) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>
+pub struct datumesh_engine::EngineBuilder
+impl datumesh_engine::EngineBuilder
+pub fn datumesh_engine::EngineBuilder::build(self) -> core::result::Result<datumesh_engine::Engine, datumesh_engine::ConfigError>
+pub fn datumesh_engine::EngineBuilder::clock(self, alloc::rcs::arc::Arc<dyn datumesh_engine::Clock>) -> Self
+pub fn datumesh_engine::EngineBuilder::depth_limit(self, usize) -> Self
+pub fn datumesh_engine::EngineBuilder::fuel(self, u64) -> Self
+pub fn datumesh_engine::EngineBuilder::licence(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn datumesh_engine::EngineBuilder::memo_capacity(self, usize) -> Self
+pub fn datumesh_engine::EngineBuilder::runtime(self, alloc::rcs::arc::Arc<dyn datumesh_engine::Runtime>) -> Self
+pub fn datumesh_engine::EngineBuilder::signing_key(self, datumesh_core::sign::SigningKey) -> Self
+pub fn datumesh_engine::EngineBuilder::signing_key_file(self, impl core::convert::Into<std::path::PathBuf>) -> Self
+pub fn datumesh_engine::EngineBuilder::summary(self, impl core::ops::function::Fn(&datumesh_core::model::Cell) -> alloc::string::String + core::marker::Send + core::marker::Sync + 'static) -> Self
+impl core::fmt::Debug for datumesh_engine::EngineBuilder
+pub fn datumesh_engine::EngineBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct datumesh_engine::MemoStats
+pub datumesh_engine::MemoStats::approx_bytes: usize
+pub datumesh_engine::MemoStats::cells: usize
+pub datumesh_engine::MemoStats::dependent_edges: usize
+pub datumesh_engine::MemoStats::dirty: usize
+pub datumesh_engine::MemoStats::entries: usize
+pub datumesh_engine::MemoStats::stale: usize
+impl core::clone::Clone for datumesh_engine::MemoStats
+pub fn datumesh_engine::MemoStats::clone(&self) -> Self
+impl core::cmp::Eq for datumesh_engine::MemoStats
+impl core::cmp::PartialEq for datumesh_engine::MemoStats
+pub fn datumesh_engine::MemoStats::eq(&self, &Self) -> bool
+impl core::default::Default for datumesh_engine::MemoStats
+pub fn datumesh_engine::MemoStats::default() -> Self
+impl core::fmt::Debug for datumesh_engine::MemoStats
+pub fn datumesh_engine::MemoStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for datumesh_engine::MemoStats
+impl core::marker::StructuralPartialEq for datumesh_engine::MemoStats
+pub struct datumesh_engine::StoreError
+impl datumesh_engine::StoreError
+pub fn datumesh_engine::StoreError::is_conflict(&self) -> bool
+pub fn datumesh_engine::StoreError::operation(&self) -> &str
+pub fn datumesh_engine::StoreError::store_error(&self) -> &datumesh_store::error::Error
+impl core::clone::Clone for datumesh_engine::StoreError
+pub fn datumesh_engine::StoreError::clone(&self) -> Self
+impl core::convert::From<datumesh_engine::StoreError> for datumesh_engine::EngineError
+pub fn datumesh_engine::EngineError::from(datumesh_engine::StoreError) -> datumesh_engine::EngineError
+impl core::error::Error for datumesh_engine::StoreError
+pub fn datumesh_engine::StoreError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for datumesh_engine::StoreError
+pub fn datumesh_engine::StoreError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for datumesh_engine::StoreError
+pub fn datumesh_engine::StoreError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct datumesh_engine::SystemClock
+impl core::clone::Clone for datumesh_engine::SystemClock
+pub fn datumesh_engine::SystemClock::clone(&self) -> Self
+impl core::default::Default for datumesh_engine::SystemClock
+pub fn datumesh_engine::SystemClock::default() -> Self
+impl core::fmt::Debug for datumesh_engine::SystemClock
+pub fn datumesh_engine::SystemClock::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for datumesh_engine::SystemClock
+impl datumesh_engine::Clock for datumesh_engine::SystemClock
+pub fn datumesh_engine::SystemClock::now(&self) -> alloc::string::String
+pub const datumesh_engine::DEFAULT_DEPTH_LIMIT: usize
+pub const datumesh_engine::DEFAULT_FUEL: u64
+pub const datumesh_engine::DEFAULT_MEMO_CAPACITY: usize
+pub trait datumesh_engine::Clock: core::marker::Send + core::marker::Sync
+pub fn datumesh_engine::Clock::now(&self) -> alloc::string::String
+impl datumesh_engine::Clock for datumesh_engine::SystemClock
+pub fn datumesh_engine::SystemClock::now(&self) -> alloc::string::String
+pub trait datumesh_engine::Inputs
+pub fn datumesh_engine::Inputs::read(&mut self, &str, &datumesh_core::model::Args) -> core::result::Result<datumesh_core::model::Scalar, datumesh_engine::EvalError>
+pub trait datumesh_engine::Runtime: core::marker::Send + core::marker::Sync
+pub fn datumesh_engine::Runtime::evaluate(&self, &datumesh_core::descriptor::Descriptor, &datumesh_core::model::Cell, &mut dyn datumesh_engine::Inputs, &mut datumesh_engine::Budget) -> core::result::Result<datumesh_core::model::Scalar, datumesh_engine::EvalError>
+pub fn datumesh_engine::Runtime::lang(&self) -> &str
+pub type datumesh_engine::SummaryFn = (dyn core::ops::function::Fn(&datumesh_core::model::Cell) -> alloc::string::String + core::marker::Send + core::marker::Sync)

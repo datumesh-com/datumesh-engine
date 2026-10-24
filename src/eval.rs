@@ -7,7 +7,7 @@
 //! again from the start. Every cell answered is kept in the request, so a re-run reads it
 //! at once. New receipts are written to the store only when the whole request has succeeded.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use datumesh_core::{lexical, Cell, Descriptor, Error as CoreError, ErrorCode, Receipt, ReceiptBuilder, Scalar};
@@ -115,6 +115,28 @@ impl<'e> Req<'e> {
         }
     }
 
+    /// The asof of a new receipt: the latest input asof (SPEC 8.2 rule 2), when every function
+    /// name the value depends on resolved then as it does as of the request's asof, so that
+    /// the receipt's value is the cell's value as of its own asof and recomputes there.
+    /// Otherwise (a name bound, or rebound, after the latest input asof: the store does not
+    /// say when a binding began) the request's asof, at which the names are known.
+    fn knowable_asof(&mut self, latest: String, names: &BTreeMap<String, String>) -> Result<String, EvalError> {
+        if latest == self.asof {
+            return Ok(latest);
+        }
+        for (name, hash) in names {
+            let at = self
+                .eng
+                .store
+                .resolve_name(name, &latest)
+                .map_err(|e| EvalError::Store(StoreError::new("resolve_name", e)))?;
+            if at.as_deref() != Some(hash.as_str()) {
+                return Ok(self.asof.clone());
+            }
+        }
+        Ok(latest)
+    }
+
     /// The function hash `fn_name` resolves to as of the request's asof (once per request).
     fn resolve(&mut self, fn_name: &str) -> Result<Option<String>, EvalError> {
         if let Some(h) = self.names.get(fn_name) {
@@ -201,6 +223,7 @@ impl<'e> Req<'e> {
         let id = cell.id();
         let state = if unsigned { State::Eval { cand: None } } else { State::Start };
         let mut stack = vec![Frame { cell, id: id.clone(), desc, state, unsigned }];
+        let mut on_stack: HashSet<String> = HashSet::from([id.clone()]);
         while let Some(top) = stack.last_mut() {
             let step = match top.state {
                 State::Start => self.start_frame(top)?,
@@ -211,12 +234,16 @@ impl<'e> Req<'e> {
                 Step::Again => {}
                 Step::Done(d) => {
                     let f = stack.pop().expect("a frame");
+                    on_stack.remove(&f.id);
                     if let Done::Value(a) = &d {
                         self.learned.push(a.clone());
                     }
                     self.done.insert(f.id, d);
                 }
                 Step::Push(cell, id, desc) => {
+                    if !on_stack.insert(id.clone()) {
+                        return Err(EngineError::Cycle { cell_id: id });
+                    }
                     if stack.len() >= self.eng.depth_limit {
                         return Err(EngineError::DepthExceeded { limit: self.eng.depth_limit });
                     }
@@ -379,10 +406,11 @@ impl<'e> Req<'e> {
         own_names: BTreeMap<String, String>,
     ) -> Result<Arc<Ans>, EngineError> {
         let tx = read.values().map(|a| a.tx.as_str()).max().unwrap_or(MIN_INSTANT).to_string();
-        let asof = read.values().map(|a| a.asof.as_str()).max().unwrap_or(MIN_INSTANT).to_string();
-        let lo = read.values().map(|a| a.lo.as_str()).max().unwrap_or(MIN_INSTANT).to_string();
-        let hi = read.values().filter_map(|a| a.hi.clone()).min();
         let names = merge_names(read.values(), own_names);
+        let latest = read.values().map(|a| a.asof.as_str()).max().unwrap_or(MIN_INSTANT).to_string();
+        let asof = self.knowable_asof(latest, &names).map_err(|e| engine_error(e, &f.id))?;
+        let lo = read.values().map(|a| a.lo.as_str()).chain(std::iter::once(asof.as_str())).max().unwrap_or(MIN_INSTANT).to_string();
+        let hi = read.values().filter_map(|a| a.hi.clone()).min();
         let deps: Vec<String> = read.values().map(|a| a.id.clone()).collect();
         let existing = match &cand {
             Some(c) if c.receipt.value() == &value => Some(c.clone()),

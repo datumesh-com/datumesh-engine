@@ -224,10 +224,13 @@ fn an_input_name_bound_after_the_inputs_asof_makes_the_receipt_answer_from_the_r
     assert_eq!(a.value(), &num("10"));
     assert_eq!(a.tx(), t(15, 0), "tx is still the latest input tx");
     assert_eq!(a.asof(), t(20, 0), "asof: the request's, at which the name is known");
-    // Later asofs reuse it; before the binding there is no value.
+    // Later asofs reuse it; before the binding the input's name resolves to nothing.
     assert_eq!(receipt_of(&w.engine().get(&r, Some(&t(25, 0))).unwrap()).hash(), a.hash());
-    assert_eq!(e.get(&r, Some(&t(17, 0))).unwrap(), Answer::NotCovered);
-    assert!(matches!(e.get(&r, Some(&t(17, 0))), Ok(Answer::NotCovered)));
-    assert_eq!(w.calls("calc.example.net/double"), 1);
+    match e.get(&r, Some(&t(17, 0))) {
+        Err(EngineError::NameUnresolved { fn_name, asof }) => assert_eq!((fn_name.as_str(), asof), (LATE, t(17, 0))),
+        other => panic!("{other:?}"),
+    }
+    // One evaluation for the 20th; the 25th reused it; the 17th's ran and failed.
+    assert_eq!(w.calls("calc.example.net/double"), 2);
     w.verify_all_issued(&e, "memo_late_binding");
 }

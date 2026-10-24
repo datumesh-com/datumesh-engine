@@ -137,3 +137,47 @@ fn a_kept_version_counts_from_when_its_value_is_known_again() {
     assert_eq!(receipt_of(&w.engine().get(&top, Some(&t(13, 12))).unwrap()).value(), &num("5"));
     w.verify_all_issued(&w.engine(), "early_cutoff_kept");
 }
+
+#[test]
+fn after_a_cutoff_the_unchanged_readers_are_rechecked_from_memory() {
+    // s -> child -> p1 -> p2 -> ... -> p20. A change of s that leaves the child's value
+    // equal: the next get of p20 reevaluates the child (the store's version of it is looked
+    // up), and rechecks p1 .. p20 from the memo's dropped answers, with no store query.
+    let mut w = World::new();
+    w.stored_fn(S, &[]);
+    w.native_fn(CHILD, &[S], &[], |_, i, _| Ok(num(if int(&i.read(S, &args(&[]))?) >= 10 { "1" } else { "0" })));
+    let mut below = CHILD.to_string();
+    for k in 1..=20 {
+        let name = format!("calc.example.net/p{k}");
+        let input = below.clone();
+        w.native_fn(&name, &[below.as_str()], &[], move |_, i, _| Ok(add(&i.read(&input, &args(&[]))?, &num("1"))));
+        below = name;
+    }
+    let counting = std::sync::Arc::new(common::counting::Counting::new(w.store.clone()));
+    let store: std::sync::Arc<dyn datumesh_store::Store + Send + Sync> = counting.clone();
+    let e = std::sync::Arc::new(
+        datumesh_engine::Engine::builder(store, MESH)
+            .signing_key(key_for(MESH))
+            .clock(std::sync::Arc::new(w.clock.clone()))
+            .runtime(std::sync::Arc::new(SharedNative(w.native.clone())))
+            .build()
+            .unwrap(),
+    );
+    w.engines.lock().unwrap().push(std::sync::Arc::downgrade(&e));
+    let s = w.cell(S, &[]);
+    let top = w.cellref("calc.example.net/p20", &[]);
+    w.publish(&s, "20", &t(10, 0));
+    let before = e.get(&top, Some(&t(11, 0))).unwrap();
+    assert_eq!(receipt_of(&before).value(), &num("21"));
+    w.publish(&s, "30", &t(12, 0));
+    assert_eq!(e.memo_stats().stale, 22, "s, the child and p1 .. p20 dropped, kept to recheck");
+    counting.take();
+    w.reset_calls();
+    assert_eq!(e.get(&top, Some(&t(13, 0))).unwrap(), before);
+    let calls = counting.take();
+    assert_eq!(w.calls(CHILD), 1);
+    assert_eq!(calls.get("computed_asof_with_receipt").copied().unwrap_or(0), 1, "only the child's: {calls:?}");
+    assert_eq!(calls.get("put_receipt").copied().unwrap_or(0), 0, "{calls:?}");
+    assert_eq!(e.memo_stats().stale, 0);
+    w.verify_all_issued(&e, "early_cutoff_recheck");
+}

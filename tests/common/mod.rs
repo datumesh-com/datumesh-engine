@@ -6,6 +6,7 @@
 //! defines; it builds engines on them.
 #![allow(dead_code)]
 
+pub mod counting;
 pub mod mem;
 
 use std::collections::BTreeMap;

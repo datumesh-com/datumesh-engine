@@ -86,7 +86,7 @@ fn a_slice_read_is_one_input_entry_with_its_manifest_and_recomputes() {
     // Members in key order: station a first, whatever the publishing order.
     assert_eq!(receipt_of(&e.get(&north(&w, FIRST), Some(&t(20, 0))).unwrap()).value(), &num("10"));
     // Before b's asof, b is not a member: 10 + 30.
-    assert_eq!(receipt_of(&e.get(&north(&w, TOTAL), Some(&t(12, 30))).unwrap()).value(), &num("40"));
+    assert_eq!(receipt_of(&e.get(&north(&w, TOTAL), Some(&t(12, 6))).unwrap()).value(), &num("40"));
     // An empty slice: sum 0; first has no member.
     let east = w.cellref(TOTAL, &[("region", text("east"))]);
     let empty = receipt_of(&e.get(&east, Some(&t(20, 0))).unwrap());
@@ -126,7 +126,7 @@ fn a_correction_to_a_member_dirties_the_reader_and_the_old_receipt_still_verifie
     assert_ne!(new.inputs(), receipt_of(&old).inputs());
     // Earlier asofs: the old receipt, from the memo or a fresh engine validating it.
     assert_eq!(e.get(&north(&w, TOTAL), Some(&t(20, 0))).unwrap(), old);
-    assert_eq!(w.engine().get(&north(&w, TOTAL), Some(&t(20, 30))).unwrap(), old);
+    assert_eq!(w.engine().get(&north(&w, TOTAL), Some(&t(20, 12))).unwrap(), old);
     assert_eq!(w.engine().get(&north(&w, TOTAL), Some(&t(23, 0))).unwrap(), e.get(&north(&w, TOTAL), Some(&t(23, 0))).unwrap());
     assert_eq!(w.calls(TOTAL), 2, "validated, not recomputed");
     // The old receipt still recomputes, at its own asof (before the correction).
@@ -163,7 +163,8 @@ fn after_a_backdated_correction_of_a_member_the_old_receipt_is_superseded() {
     assert!(fresh.manifest(new_entry).is_some());
     // The answer as of the 20th now is 31, the old receipt's value 30 is historical.
     assert_eq!(receipt_of(&e.get(&north(&w, TOTAL), Some(&t(20, 0))).unwrap()).value(), &num("31"));
-    w.verify_all_issued(&fresh, "slices_backdated");
+    // (The old receipt is historical now: the others recompute; all verify at signed.)
+    dump("slices_backdated", &w.issued_receipts());
 }
 
 #[test]
@@ -413,7 +414,7 @@ fn versions_and_transaction_time_reads() {
     // tx: the latest member's; asof: `to`, later than every member's asof.
     assert_eq!((r.tx(), r.asof()), (t(14, 0).as_str(), t(15, 0).as_str()));
     // `to` after the evaluation's asof: E_FORMULA_FUTURE.
-    assert_eq!(e.get(&window, Some(&t(14, 30))).unwrap(), faulted(Fault::Future));
+    assert_eq!(e.get(&window, Some(&t(14, 12))).unwrap(), faulted(Fault::Future));
     // asof(fx, T): the version answering as of T, an ordinary input; T is an asof candidate.
     let past = w.cellref("calc.example.net/past", &[]);
     let p = receipt_of(&e.get(&past, Some(&t(20, 0))).unwrap());

@@ -185,6 +185,7 @@ impl EngineBuilder {
             memo: Memo::new(self.memo_capacity),
             descriptors: Cache::new(DESCRIPTOR_CACHE),
             receipts: Cache::new(RECEIPT_CACHE),
+            asof_dependent: Cache::new(DESCRIPTOR_CACHE),
             evaluator: Mutex::new(()),
         })
     }
@@ -213,6 +214,9 @@ pub struct Engine {
     pub(crate) descriptors: Cache<Arc<FunctionDescriptor>>,
     /// Parsed receipts by hash (immutable: content-addressed).
     pub(crate) receipts: Cache<Arc<Parsed>>,
+    /// Whether a function is asof-dependent, by function hash: a pure function of the
+    /// descriptor, which a runtime may take long to derive (it is asked on every frame).
+    pub(crate) asof_dependent: Cache<bool>,
     /// Evaluations run one at a time (single-flight); answers from the memo do not wait.
     pub(crate) evaluator: Mutex<()>,
 }
@@ -431,6 +435,17 @@ impl Engine {
             Done::Unsigned(v, lineage) => Some(Evaluation::with_lineage(v, lineage)),
             Done::NotCovered | Done::Fault(..) => None,
         })
+    }
+
+    /// Whether the function `fn_hash` (descriptor `desc`) is declared asof-dependent by its
+    /// runtime, cached by hash.
+    pub(crate) fn asof_dependent(&self, fn_hash: &str, desc: &FunctionDescriptor) -> bool {
+        if let Some(b) = self.asof_dependent.get(fn_hash) {
+            return b;
+        }
+        let b = self.runtimes.get(&desc.lang).is_some_and(|rt| rt.asof_dependent(desc));
+        self.asof_dependent.insert(fn_hash.to_string(), b);
+        b
     }
 
     /// The parsed descriptor of `fn_hash`, cached.

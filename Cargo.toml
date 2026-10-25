@@ -30,6 +30,10 @@ datumesh-core = { version = "0.3.4", features = ["sign", "testkit"] }
 name = "bench"
 required-features = ["native-test"]
 
+[[example]]
+name = "cutoff"
+required-features = ["native-test"]
+
 # curve25519 and sha2 are optimised even in test builds: the tests sign and verify many
 # receipts.
 [profile.dev.package."*"]

@@ -228,10 +228,10 @@ pub(crate) struct Req<'e> {
     eng: &'e Engine,
     asof: String,
     issued: String,
-    /// Names resolved as of an instant: the function hash and the start of the binding.
-    names: HashMap<(String, String), Option<(String, String)>>,
-    /// Cells answered, by (asof, cell id).
-    done: HashMap<(String, String), Done>,
+    /// Names resolved, by instant then name: the function hash and the start of the binding.
+    names: HashMap<String, HashMap<String, Option<(String, String)>>>,
+    /// Cells answered, by asof then cell id.
+    done: HashMap<String, HashMap<String, Done>>,
     /// Slices read, by (asof, slice id).
     slices: HashMap<(String, String), Arc<SliceRead>>,
     fresh: Vec<Fresh>,
@@ -314,38 +314,58 @@ impl<'e> Req<'e> {
     /// The binding `fn_name` has as of `at`, its function hash and when it began (one query
     /// per name and instant per request).
     fn binding(&mut self, fn_name: &str, at: &str) -> Result<Option<(String, String)>, EvalError> {
-        let key = (fn_name.to_string(), at.to_string());
-        if let Some(b) = self.names.get(&key) {
-            return Ok(b.clone());
+        Ok(self.binding_ref(fn_name, at)?.clone())
+    }
+
+    /// [`binding`](Req::binding), borrowed (no allocation when it is known).
+    fn binding_ref(&mut self, fn_name: &str, at: &str) -> Result<&Option<(String, String)>, EvalError> {
+        let known = self.names.get(at).is_some_and(|m| m.contains_key(fn_name));
+        if !known {
+            let b = self
+                .eng
+                .store
+                .resolve_binding(fn_name, at)
+                .map_err(store_err("resolve_binding"))?
+                .map(|b| (b.fn_hash, b.tx));
+            self.names.entry(at.to_string()).or_default().insert(fn_name.to_string(), b);
         }
-        let b = self
-            .eng
-            .store
-            .resolve_binding(fn_name, at)
-            .map_err(store_err("resolve_binding"))?
-            .map(|b| (b.fn_hash, b.tx));
-        self.names.insert(key, b.clone());
-        Ok(b)
+        Ok(self.names.get(at).and_then(|m| m.get(fn_name)).unwrap_or(&None))
     }
 
     /// The function hash `fn_name` resolves to as of `at`.
     fn resolve(&mut self, fn_name: &str, at: &str) -> Result<Option<String>, EvalError> {
-        Ok(self.binding(fn_name, at)?.map(|(h, _)| h))
+        Ok(self.binding_ref(fn_name, at)?.as_ref().map(|(h, _)| h.clone()))
+    }
+
+    /// Whether `fn_name` resolves to `hash` as of `at`.
+    fn resolves_to(&mut self, fn_name: &str, at: &str, hash: &str) -> Result<bool, EvalError> {
+        Ok(self.binding_ref(fn_name, at)?.as_ref().is_some_and(|(h, _)| h == hash))
     }
 
     /// Whether every name of `names` still resolves as recorded, as of `asof` (or its own
     /// transaction time).
     fn names_hold(&mut self, names: &Names, asof: &str) -> Result<bool, EvalError> {
         for ((name, at), hash) in names {
-            if self.resolve(name, at.as_deref().unwrap_or(asof))?.as_deref() != Some(hash.as_str()) {
+            if !self.resolves_to(name, at.as_deref().unwrap_or(asof), hash)? {
                 return Ok(false);
             }
         }
         Ok(true)
     }
 
+    fn set_done(&mut self, asof: &str, id: &str, d: Done) {
+        match self.done.get_mut(asof) {
+            Some(m) => {
+                m.insert(id.to_string(), d);
+            }
+            None => {
+                self.done.entry(asof.to_string()).or_default().insert(id.to_string(), d);
+            }
+        }
+    }
+
     fn done_at(&self, asof: &str, id: &str) -> Option<&Done> {
-        self.done.get(&(asof.to_string(), id.to_string()))
+        self.done.get(asof).and_then(|m| m.get(id))
     }
 
     /// A cell's answer as of `asof` if it can be had without evaluating a function.
@@ -361,12 +381,12 @@ impl<'e> Req<'e> {
         }
         if let Some(a) = self.memo_hit(id, asof)? {
             let d = Done::Value(a);
-            self.done.insert((asof.to_string(), id.to_string()), d.clone());
+            self.set_done(asof, id, d.clone());
             return Ok(Lookup::Ready(d));
         }
         if desc.lang == STORED {
             let d = self.stored(cell, id, asof)?;
-            self.done.insert((asof.to_string(), id.to_string()), d.clone());
+            self.set_done(asof, id, d.clone());
             return Ok(Lookup::Ready(d));
         }
         Ok(Lookup::Eval(desc))
@@ -485,7 +505,7 @@ impl<'e> Req<'e> {
                                 }
                             }
                         }
-                        self.done.insert((f.asof, f.id), d);
+                        self.set_done(&f.asof, &f.id, d);
                     }
                 }
                 Step::Push(mut list) => {
@@ -582,7 +602,7 @@ impl<'e> Req<'e> {
 
     /// Whether the frame's function is declared asof-dependent by its runtime.
     fn asof_dependent(&self, f: &Frame) -> bool {
-        self.eng.runtimes.get(&f.desc.lang).is_some_and(|rt| rt.asof_dependent(&f.desc))
+        self.eng.asof_dependent(&f.cell.fn_hash, &f.desc)
     }
 
     /// The store's computed version answering as of the asof, to validate; else evaluate.
@@ -657,7 +677,7 @@ impl<'e> Req<'e> {
     ) -> Result<Check, EngineError> {
         let when = at.unwrap_or(asof).to_string();
         let name = cell.function_name();
-        if self.resolve(&name, &when).map_err(|e| engine_error(e, id))?.as_deref() != Some(cell.fn_hash.as_str()) {
+        if !self.resolves_to(&name, &when, &cell.fn_hash).map_err(|e| engine_error(e, id))? {
             return Ok(Check::Differs);
         }
         self.budget.work(1).map_err(|e| engine_error(e, id))?;
@@ -714,7 +734,7 @@ impl<'e> Req<'e> {
     ) -> Result<Check, EngineError> {
         let fail = |e: EvalError| engine_error(e, entry);
         let name = slice.function_name();
-        if self.resolve(&name, asof).map_err(fail)?.as_deref() != Some(slice.fn_hash()) {
+        if !self.resolves_to(&name, asof, slice.fn_hash()).map_err(fail)? {
             return Ok(Check::Differs);
         }
         let Some(desc) = self.eng.descriptor_of(slice.fn_hash())? else { return Ok(Check::Differs) };
@@ -921,7 +941,20 @@ impl<'e> Req<'e> {
         let mut latest = MIN_INSTANT.to_string();
         let mut lo = MIN_INSTANT.to_string();
         let mut hi: Option<String> = None;
-        let mut names = own;
+        // The names, sharing an input's map when nothing is added to it.
+        let mut names: Option<Arc<Names>> = None;
+        let add = |names: &mut Option<Arc<Names>>, from: &Arc<Names>| match names {
+            None => *names = Some(from.clone()),
+            Some(acc) => {
+                if from.keys().any(|k| !acc.contains_key(k)) {
+                    let m = Arc::make_mut(acc);
+                    for (k, v) in from.iter() {
+                        m.entry(k.clone()).or_insert_with(|| v.clone());
+                    }
+                }
+            }
+        };
+        let mut extra = Names::new();
         let mut inputs = Vec::new();
         let mut memo = true;
         let mut entries = BTreeSet::new();
@@ -938,16 +971,14 @@ impl<'e> Req<'e> {
                             raise(&mut latest, &ans.lo);
                             raise(&mut lo, &ans.lo);
                             lower(&mut hi, &ans.hi);
-                            for (k, v) in ans.names.iter() {
-                                names.entry(k.clone()).or_insert_with(|| v.clone());
-                            }
+                            add(&mut names, &ans.names);
                         }
                         Some(t) => {
                             raise(&mut latest, t);
                             raise(&mut latest, &ans.asof);
                             for ((n, a), v) in ans.names.iter() {
                                 let at = a.clone().unwrap_or_else(|| t.clone());
-                                names.entry((n.clone(), Some(at))).or_insert_with(|| v.clone());
+                                extra.entry((n.clone(), Some(at))).or_insert_with(|| v.clone());
                             }
                         }
                     }
@@ -971,17 +1002,24 @@ impl<'e> Req<'e> {
                     }
                     lower(&mut hi, &s.hi);
                     memo &= s.memo;
-                    names.entry((s.fn_name.clone(), None)).or_insert_with(|| s.fn_hash.clone());
+                    extra.entry((s.fn_name.clone(), None)).or_insert_with(|| s.fn_hash.clone());
                     for a in &s.member_ans {
-                        for (k, v) in a.names.iter() {
-                            names.entry(k.clone()).or_insert_with(|| v.clone());
-                        }
+                        add(&mut names, &a.names);
                     }
                     inputs.push(Use::Slice(s.clone()));
                 }
             }
         }
-        Facts { tx, latest, lo, hi, names: Arc::new(names), inputs, memo, entries }
+        // Own names first (as before: the first recorded wins), then what the inputs add.
+        let mut names = names.unwrap_or_default();
+        let missing = |m: &Names, from: &Names| from.keys().any(|k| !m.contains_key(k));
+        if missing(&names, &own) || missing(&names, &extra) {
+            let m = Arc::make_mut(&mut names);
+            for (k, v) in own.into_iter().chain(extra) {
+                m.insert(k, v);
+            }
+        }
+        Facts { tx, latest, lo, hi, names, inputs, memo, entries }
     }
 
     /// Runs a frame's runtime once.
@@ -989,7 +1027,7 @@ impl<'e> Req<'e> {
         let Some(rt) = self.eng.runtimes.get(&f.desc.lang).cloned() else {
             return Err(EngineError::NoRuntime { lang: f.desc.lang.clone(), fn_hash: f.cell.fn_hash.clone() });
         };
-        let declared = rt.asof_dependent(&f.desc);
+        let declared = self.eng.asof_dependent(&f.cell.fn_hash, &f.desc);
         let mut budget = self.budget.share();
         budget.begin_attempt(f.floor);
         let mut reader = Reader {

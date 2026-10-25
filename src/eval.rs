@@ -286,7 +286,8 @@ struct How {
     computed: bool,
     /// Kept in the memo.
     memo: bool,
-    /// The value rests on a fault a read returned, which holds from this instant.
+    /// A further asof candidate: where a fault a read returned holds from, and the latest
+    /// time `asof_compare` found at or before the asof.
     known: Option<String>,
 }
 
@@ -474,8 +475,15 @@ impl<'e> Req<'e> {
                 Step::Done(d) => {
                     if let Some(f) = stack.pop() {
                         on_stack.remove(&key(&f.asof, &f.id));
-                        if let Done::Value(a) = &d {
-                            self.learned.push(a.clone());
+                        match &d {
+                            Done::Value(a) => self.learned.push(a.clone()),
+                            // A member without a value ends a computed slice's read: the members
+                            // after it (in key order) are not evaluated.
+                            _ => {
+                                if let Some(parent) = stack.last_mut() {
+                                    parent.pending.clear();
+                                }
+                            }
                         }
                         self.done.insert((f.asof, f.id), d);
                     }
@@ -750,15 +758,21 @@ impl<'e> Req<'e> {
                 let cells = extent_cells(fn_name, &fn_hash, &desc, pattern).map_err(EvalError::InvalidInput)?;
                 let mut pending = Vec::new();
                 let mut absent: Option<String> = None;
+                // In key order, up to the first member without a value (SPEC 15.13, 15.12):
+                // members after it are neither evaluated nor charged. Members not answered yet
+                // before it are evaluated first (in key order; the run stops pushing them at
+                // the first that has no value).
                 for cell in cells {
                     let id = cell.id();
                     match self.lookup(&cell, &id, desc.clone(), asof)? {
                         Lookup::Ready(Done::Value(a)) => member_ans.push(a),
                         Lookup::Ready(Done::Fault(_, known)) => {
-                            absent = Some(absent.map_or(known.clone(), |k| k.max(known)));
+                            absent = Some(known);
+                            break;
                         }
                         Lookup::Ready(_) => {
-                            absent.get_or_insert_with(|| MIN_INSTANT.to_string());
+                            absent = Some(MIN_INSTANT.to_string());
+                            break;
                         }
                         Lookup::Eval(d) => pending.push(Pend { cell, id, desc: d, asof: asof.to_string() }),
                     }
@@ -988,11 +1002,13 @@ impl<'e> Req<'e> {
             stop: None,
             faulted: false,
             fault_known: MIN_INSTANT.to_string(),
+            compared: MIN_INSTANT.to_string(),
+            future_seen: false,
             at_read: false,
             asof_read: false,
         };
         let result = rt.evaluate(&f.desc, &f.cell, &mut reader, &mut budget);
-        let Reader { read, names, stop, faulted, fault_known, at_read, asof_read, .. } = reader;
+        let Reader { read, names, stop, faulted, fault_known, compared, future_seen, at_read, asof_read, .. } = reader;
         let fail = |e: EvalError| engine_error(e, &f.id);
         // Exhaustion wins over anything the runtime made of it.
         if budget.is_exhausted() {
@@ -1005,6 +1021,12 @@ impl<'e> Req<'e> {
             }
             Some(Stop::NotCovered) => {
                 budget.finish_attempt();
+                // The times come before the cells (SPEC 15.13): E_FORMULA_FUTURE the runtime
+                // established (a time found after the asof) stands over an input without a
+                // value. Either way the cell has no value; this is which code it reports.
+                if matches!(result, Err(EvalError::Fault(Fault::Future))) && (future_seen || asof_read) {
+                    return Ok(Step::Done(Done::Fault(Fault::Future, f.asof.clone())));
+                }
                 return Ok(Step::Done(Done::NotCovered));
             }
             Some(Stop::Fatal(e)) => return Err(fail(e)),
@@ -1017,7 +1039,7 @@ impl<'e> Req<'e> {
             Err(EvalError::Fault(code)) => {
                 // Where the fault holds from: as a receipt's asof would be, had it a value.
                 let facts = self.facts(&read, names);
-                let latest = facts.latest.max(fault_known);
+                let latest = facts.latest.max(fault_known).max(compared.clone());
                 let known = if declared || asof_read {
                     f.asof.clone()
                 } else {
@@ -1063,7 +1085,7 @@ impl<'e> Req<'e> {
             // read at a transaction time, or on the asof read undeclared.
             computed: !faulted && !at_read && !(asof_read && !declared),
             memo: !faulted,
-            known: faulted.then_some(fault_known),
+            known: Some(if faulted { fault_known.max(compared) } else { compared }),
         };
         let ans = self.answer_with(f, cand, value, &read, names, how)?;
         Ok(Step::Done(Done::Value(ans)))
@@ -1294,6 +1316,10 @@ struct Reader<'r, 'e> {
     /// A read returned a fault (the runtime may have caught it), and since when it holds.
     faulted: bool,
     fault_known: String,
+    /// The latest instant `asof_compare` found at or before the asof: an asof candidate.
+    compared: String,
+    /// A time after the asof was established (`E_FORMULA_FUTURE` may be reported).
+    future_seen: bool,
     /// A cell was read at a transaction time.
     at_read: bool,
     /// The asof was read.
@@ -1313,6 +1339,7 @@ impl Reader<'_, '_> {
     fn future(&mut self) -> EvalError {
         self.faulted = true;
         self.asof_read = true;
+        self.future_seen = true;
         EvalError::Fault(Fault::Future)
     }
 
@@ -1457,7 +1484,8 @@ impl Inputs for Reader<'_, '_> {
     }
 
     fn read_asof(&mut self, fn_name: &str, args: &Args, t: &str) -> Result<Input, EvalError> {
-        if let Some(e) = self.stopped() {
+        // The time first, even after the run had to stop (SPEC 15.13).
+        if let Some(e) = self.stopped().filter(|_| is_instant(t) && t <= self.asof.as_str()) {
             return Err(e);
         }
         let r = (|| {
@@ -1486,7 +1514,9 @@ impl Inputs for Reader<'_, '_> {
     }
 
     fn read_versions(&mut self, fn_name: &str, args: &Args, from: &str, to: &str) -> Result<Vec<Input>, EvalError> {
-        if let Some(e) = self.stopped() {
+        // The times first, even after the run had to stop (SPEC 15.13).
+        let times_ok = is_instant(from) && is_instant(to) && to <= self.asof.as_str();
+        if let Some(e) = self.stopped().filter(|_| times_ok) {
             return Err(e);
         }
         let r = (|| {
@@ -1536,6 +1566,47 @@ impl Inputs for Reader<'_, '_> {
     fn asof(&mut self) -> String {
         self.asof_read = true;
         self.asof.clone()
+    }
+
+    fn binding_peek(&mut self, fn_name: &str, at: Option<&str>) -> Result<Option<FnBinding>, EvalError> {
+        if let Some(e) = self.stopped() {
+            return Err(e);
+        }
+        let r = (|| {
+            self.declared(fn_name)?;
+            if let Some(t) = at {
+                instant_arg(t, "$.at")?;
+            }
+            let when = at.unwrap_or(&self.asof).to_string();
+            let Some((fn_hash, start)) = self.req.binding(fn_name, &when)? else { return Ok(None) };
+            let descriptor = match self.req.eng.descriptor_of(&fn_hash) {
+                Ok(Some(d)) => d,
+                Ok(None) => {
+                    return Err(EvalError::Store(StoreError::new(
+                        "descriptor",
+                        datumesh_store::Error::NotFound { what: "descriptor", key: fn_hash },
+                    )))
+                }
+                Err(EngineError::Store(e)) => return Err(EvalError::Store(e)),
+                Err(EngineError::Invalid(e)) => return Err(EvalError::InvalidInput(e)),
+                Err(e) => return Err(EvalError::Runtime(e.to_string())),
+            };
+            Ok(Some(FnBinding::new(fn_hash, start, descriptor)))
+        })();
+        self.guard(r)
+    }
+
+    fn asof_compare(&mut self, t: &str) -> Result<std::cmp::Ordering, EvalError> {
+        instant_arg(t, "$.t")?;
+        let ord = t.cmp(self.asof.as_str());
+        if ord == std::cmp::Ordering::Greater {
+            // Changes once the asof reaches t: asof-dependent.
+            self.asof_read = true;
+            self.future_seen = true;
+        } else if t > self.compared.as_str() {
+            self.compared = t.to_string();
+        }
+        Ok(ord)
     }
 }
 

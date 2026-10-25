@@ -130,6 +130,13 @@ pub struct FnBinding {
     pub descriptor: Arc<FunctionDescriptor>,
 }
 
+impl FnBinding {
+    /// A binding (for a runtime's own tests, without a store). Since 0.3.1.
+    pub fn new(fn_hash: impl Into<String>, start: impl Into<String>, descriptor: Arc<FunctionDescriptor>) -> FnBinding {
+        FnBinding { fn_hash: fn_hash.into(), start: start.into(), descriptor }
+    }
+}
+
 /// How a runtime reads the cells its function depends on, and the evaluation's asof.
 ///
 /// Every read checks that the function read is in the descriptor's `inputs`
@@ -185,6 +192,37 @@ pub trait Inputs {
     /// The evaluation's asof (SPEC 15.12 `asof()`). Reading it makes the evaluation
     /// asof-dependent (see [`Runtime::asof_dependent`]). Free.
     fn asof(&mut self) -> String;
+
+    /// The binding of `fn_name` as of the evaluation's asof, or as of `at`, looked up without
+    /// being relied on: no asof candidate, no dependency of the answer on the name. For a
+    /// runtime that needs to know what a name means (to check a body against it, say) before,
+    /// or without, reading it; a read of the name still relies on it. Free. Since 0.3.1.
+    ///
+    /// Provided: [`binding`](Inputs::binding), which relies on it (the engine's inputs
+    /// override it).
+    fn binding_peek(&mut self, fn_name: &str, at: Option<&str>) -> Result<Option<FnBinding>, EvalError> {
+        self.binding(fn_name, at)
+    }
+
+    /// How the instant `t` compares with the evaluation's asof (`t.cmp(asof)`), without
+    /// making the evaluation asof-dependent when the answer cannot change at a later asof.
+    /// Free. Since 0.3.1.
+    ///
+    /// What the engine records: when `t` is at or before the asof (`Less` or `Equal`), `t` is
+    /// a candidate for the receipt's `asof` (as `T` of a transaction-time read is), so every
+    /// asof the receipt answers or is validated at is at or after `t` and the comparison gives
+    /// the same there; the receipt recomputes at its own asof. When `t` is after it
+    /// (`Greater`), the answer would change once the asof reaches `t`: the evaluation is then
+    /// asof-dependent, as by [`asof`](Inputs::asof) (and a runtime may report
+    /// `E_FORMULA_FUTURE` for it, even after an input without a value). A `t` that is not an
+    /// instant is [`EvalError::InvalidInput`].
+    ///
+    /// Provided: by [`asof`](Inputs::asof), which always makes the evaluation asof-dependent
+    /// (the engine's inputs override it).
+    fn asof_compare(&mut self, t: &str) -> Result<std::cmp::Ordering, EvalError> {
+        datumesh_core::lexical::check_instant(t, "$.t").map_err(EvalError::InvalidInput)?;
+        Ok(t.cmp(self.asof().as_str()))
+    }
 }
 
 /// The fuel of an evaluation attempt, on the request's meter.
@@ -308,14 +346,15 @@ impl Budget {
         if m.exhausted != Exhausted::No {
             return Err(EvalError::BudgetExceeded { fuel: m.limit });
         }
+        // The normative limit first: a charge exceeding both is BudgetExceeded.
         m.work = m.work.saturating_add(steps);
-        if m.work > m.work_limit {
-            m.exhausted = Exhausted::Work;
-            return Err(EvalError::BudgetExceeded { fuel: m.limit });
-        }
         m.attempt = m.attempt.saturating_add(steps);
         if m.bound() > m.limit {
             m.exhausted = Exhausted::Fuel;
+            return Err(EvalError::BudgetExceeded { fuel: m.limit });
+        }
+        if m.work > m.work_limit {
+            m.exhausted = Exhausted::Work;
             return Err(EvalError::BudgetExceeded { fuel: m.limit });
         }
         Ok(())

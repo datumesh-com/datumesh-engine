@@ -168,3 +168,120 @@ fn memo_and_validation_agree_under_a_stream_of_new_versions() {
     }
     w.verify_all_issued(&e, "concurrency_stream");
 }
+
+const K: &str = r#"{"type":"number","unit":"1","valid":false}"#;
+const SLICE_TOP: &str = "calc.example.net/slicetop";
+
+/// slicetop() = the sum of s1(k: *), over a stored function with one argument.
+fn slice_graph() -> World {
+    let mut w = World::new();
+    w.stored_fn(S1, &[("k", K)]);
+    w.native_fn(SLICE_TOP, &[S1], &[], |_, i, _| {
+        let members = i.read_slice(S1, &pattern(&[("k", open())]))?;
+        Ok(sum(members.iter().map(|m| &m.input.value)))
+    });
+    w
+}
+
+#[test]
+fn two_threads_getting_the_same_slice_reader_evaluate_it_once() {
+    let mut w = slice_graph();
+    w.native_fn("calc.example.net/slowslice", &[S1], &[], |_, i, _| {
+        let members = i.read_slice(S1, &pattern(&[("k", open())]))?;
+        std::thread::sleep(Duration::from_millis(300));
+        Ok(sum(members.iter().map(|m| &m.input.value)))
+    });
+    for k in 0..3 {
+        w.publish(&w.cell(S1, &[("k", num(&k.to_string()))]), &(k + 1).to_string(), &t(10, k));
+    }
+    let e = w.engine();
+    let r = w.cellref("calc.example.net/slowslice", &[]);
+    let start = Arc::new(Barrier::new(2));
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let (e, r, start) = (e.clone(), r.clone(), start.clone());
+            std::thread::spawn(move || {
+                start.wait();
+                e.get(&r, Some(&t(20, 0))).unwrap()
+            })
+        })
+        .collect();
+    let answers: Vec<Answer> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    assert_eq!(answers[0], answers[1]);
+    assert_eq!(receipt_of(&answers[0]).value(), &num("6"));
+    assert_eq!(w.calls("calc.example.net/slowslice"), 1, "one evaluation");
+    assert_eq!(w.db().count("manifests"), 1);
+    w.verify_all_issued(&e, "concurrency_slice_single_flight");
+}
+
+#[test]
+fn memo_and_validation_agree_for_a_slice_reader_under_a_stream_of_new_members_and_corrections() {
+    let w = Arc::new(slice_graph());
+    let e = w.engine();
+    let top = w.cellref(SLICE_TOP, &[]);
+    // Each step publishes s1(k) for k in 0..6 (a new member the first time, a correction
+    // after), at the next hour.
+    let steps: Vec<(i128, i128)> = (0..36).map(|j| ((j * 5) % 6, (j * 7) % 11)).collect();
+    let history: Arc<Mutex<Vec<(String, i128, i128)>>> = Arc::new(Mutex::new(Vec::new()));
+    let watermark = Arc::new(Mutex::new(String::new()));
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let tx_of = |j: usize| format!("2024-05-{:02}T{:02}:00:00.000000Z", 1 + j / 24, j % 24);
+    let readers: Vec<_> = (0..3)
+        .map(|n| {
+            let (e, top, history, watermark, done) =
+                (e.clone(), top.clone(), history.clone(), watermark.clone(), done.clone());
+            std::thread::spawn(move || {
+                let mut seen: Vec<(String, Answer)> = Vec::new();
+                let mut i = n;
+                while !done.load(std::sync::atomic::Ordering::SeqCst) || seen.len() < 15 {
+                    let w = watermark.lock().unwrap().clone();
+                    if w.is_empty() {
+                        std::thread::yield_now();
+                        continue;
+                    }
+                    let asof = {
+                        let h = history.lock().unwrap();
+                        if i % 3 == 0 {
+                            w.clone()
+                        } else {
+                            h[i % h.len()].0.clone()
+                        }
+                    };
+                    i += 5;
+                    seen.push((asof.clone(), e.get(&top, Some(&asof)).unwrap()));
+                }
+                seen
+            })
+        })
+        .collect();
+    for (j, (k, v)) in steps.iter().enumerate() {
+        let tx = tx_of(j);
+        w.publish(&w.cell(S1, &[("k", num(&k.to_string()))]), &v.to_string(), &tx);
+        history.lock().unwrap().push((tx.clone(), *k, *v));
+        *watermark.lock().unwrap() = tx;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    done.store(true, std::sync::atomic::Ordering::SeqCst);
+    let seen: Vec<(String, Answer)> = readers.into_iter().flat_map(|h| h.join().unwrap()).collect();
+    let history = history.lock().unwrap().clone();
+    let oracle = |asof: &str| -> i128 {
+        let mut latest: BTreeMap<i128, i128> = BTreeMap::new();
+        for (tx, k, v) in &history {
+            if tx.as_str() <= asof {
+                latest.insert(*k, *v);
+            }
+        }
+        latest.values().sum()
+    };
+    let fresh = w.engine_with(|b| b.memo_capacity(0));
+    let keys = all_keys();
+    for (asof, answer) in &seen {
+        let r = receipt_of(answer);
+        assert_eq!(r.value(), &num(&oracle(asof).to_string()), "as of {asof}");
+        assert_eq!(receipt_of(&fresh.get(&top, Some(asof)).unwrap()).value(), r.value(), "as of {asof}");
+        assert!(r.asof() <= asof.as_str());
+        let out = datumesh_core::verify(&bytes_of(answer), &keys, Some(&*fresh as &dyn datumesh_core::Resolver), None);
+        assert_eq!(out.level, Some(datumesh_core::Level::Recomputed), "{out:?}");
+    }
+    w.verify_all_issued(&e, "concurrency_slice_stream");
+}

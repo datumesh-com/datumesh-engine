@@ -48,6 +48,40 @@ fn the_testkit_passes_with_the_engine() {
     explicit.check_asof(&engine).unwrap();
 }
 
+/// `load`, and the kit's slice fixtures (core 0.3.4): key documents, descriptors (formula
+/// descriptors with `signature.order`), receipts (citing and members) and manifests.
+fn load_with_slices(db: &TestDb, fx: &Fixtures) -> Engine {
+    let engine = load(db, fx);
+    let s = db.store();
+    let sf = &fx.slices;
+    for (host, doc) in &sf.key_documents {
+        s.put_namespace(host, doc, "2024-01-01T00:00:00.000000Z").unwrap();
+    }
+    for (h, b) in &sf.descriptors {
+        assert_eq!(&s.put_descriptor(b).unwrap(), h);
+    }
+    for (h, b) in &sf.receipts {
+        assert_eq!(&s.put_receipt(b).unwrap(), h);
+    }
+    for (e, b) in &sf.manifests {
+        assert_eq!(&s.put_manifest(b).unwrap(), e);
+    }
+    engine
+}
+
+#[test]
+fn the_testkit_passes_with_the_engine_and_slices() {
+    // The slice checks (Kit::slices): manifests by entry exactly as loaded, members from the
+    // store, None for every entry not loaded; the receipts citing slices pass step 7.5 (their
+    // formula functions have no runtime here: E_EVAL_UNAVAILABLE).
+    let db = TestDb::migrated();
+    let kit = Kit::new().time_aware(true).slices(true);
+    assert!(!kit.fixtures().slices.manifests.is_empty());
+    let engine = load_with_slices(&db, kit.fixtures());
+    kit.check(&engine).unwrap();
+    kit.check_slices(&engine).unwrap();
+}
+
 #[test]
 fn under_the_tx_only_rule_the_kit_differs_at_a_late_signed_tx() {
     let db = TestDb::migrated();

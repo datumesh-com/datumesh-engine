@@ -98,9 +98,18 @@ fn a_backdated_correction_is_answered_and_its_receipt_reused() {
     let out = datumesh_core::verify(&w.stored_bytes(new.hash()), &all_keys(), Some(&*e as &dyn Resolver), None);
     assert_eq!(out.level, Some(datumesh_core::Level::Recomputed), "{out:?}");
     // The old receipt no longer recomputes: the correction rewrote b's history as of the
-    // 10th. It verified when it was made; now its value as of its own asof is another.
+    // 10th. It verified when it was made; now its value as of its own asof is another, and
+    // the evaluation's lineage shows why (spec-0.4.0, 10.1 step 7.6): b's input was replaced
+    // by a later version of the same cell, E_INPUT_SUPERSEDED, at level signed.
     let out = datumesh_core::verify(&w.stored_bytes(old.hash()), &all_keys(), Some(&*e as &dyn Resolver), None);
-    assert_eq!(out.code, Some(datumesh_core::ErrorCode::ValueMismatch), "{out:?}");
+    assert!(out.ok, "{out:?}");
+    assert_eq!(out.code, Some(datumesh_core::ErrorCode::InputSuperseded), "{out:?}");
+    assert_eq!(out.level, Some(datumesh_core::Level::Signed), "{out:?}");
+    let ev = e.evaluation(old.cell(), old.asof()).unwrap();
+    assert_eq!(ev.value, num("5"));
+    let mut lineage = ev.lineage.unwrap();
+    lineage.sort();
+    assert_eq!(lineage, new.inputs().to_vec(), "the receipts read: those of the new receipt");
     assert_eq!(w.issued_receipts().len(), 2);
     dump("early_cutoff_backdated", &w.issued_receipts());
 }

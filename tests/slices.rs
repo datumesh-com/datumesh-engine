@@ -172,7 +172,7 @@ fn after_a_backdated_correction_of_a_member_the_old_receipt_is_superseded() {
     // The answer as of the 20th now is 31, the old receipt's value 30 is historical.
     assert_eq!(receipt_of(&e.get(&north(&w, TOTAL), Some(&t(20, 0))).unwrap()).value(), &num("31"));
     // (The old receipt is historical now: the others recompute; all verify at signed.)
-    dump("slices_backdated", &w.issued_receipts());
+    w.dump("slices_backdated");
 }
 
 #[test]

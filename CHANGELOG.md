@@ -2,6 +2,65 @@
 
 All notable changes to `datumesh-engine`.
 
+## 0.3.0 (unreleased)
+
+On `datumesh-store` 0.3.1 and `datumesh-core` 0.3.4 (spec-0.4.0). Breaking
+(`API-CHANGES-0.3.0.md`): `Runtime::evaluate` takes a `FunctionDescriptor`; `Inputs` has
+new required methods; `Answer` is `#[non_exhaustive]` and `NotCovered` carries a fault.
+
+### Added
+
+- Slice reads (SPEC 15.13): `Inputs::read_slice(fn_name, pattern)` with `Pattern` (`Value`,
+  `Open`, `Range`) and `SlicePattern`, giving `Member`s in key order. A stored function's
+  members come from `Store::slice_members`; a computed function's from its declared `extent`
+  (or, for a range over a `date` or integer `number` argument without one, every day or
+  integer), each member evaluated, memoised and checked for cycles like any input, every
+  missing member evaluated before the reader runs again (one restart per slice); a member
+  without a value makes the read the fault `E_FORMULA_ABSENT`. One `inputs` entry
+  `slice:<slice id>:<members hash>` per slice; its manifest is stored with `put_manifest`
+  when the request succeeds.
+- `Inputs::read_cell` (value, receipt hash, `tx`, `asof`), `Inputs::read_asof(fn, args, T)`
+  (the name resolved and the cell answered as of `T`; a computed cell evaluated as of `T`),
+  `Inputs::read_versions(fn, args, from, to)` (a version slice), `Inputs::binding(fn, at)`
+  (`FnBinding`: hash, start, descriptor), `Inputs::asof()`; `E_FORMULA_FUTURE` for a `T` or
+  `to` after the evaluation asof. `Input`, `Member` (`#[non_exhaustive]`, with `new` for a
+  runtime's tests).
+- `EvalError::Fault(datumesh_core::Fault)`: a runtime's evaluation fault gives
+  `Answer::NotCovered { fault: Some(code) }`, no receipt, nothing stored for the cell; a
+  reader of a faulted cell gets the fault and may catch it.
+- `Runtime::asof_dependent(descriptor)` (provided: `false`) and
+  `NativeTest::set_asof_dependent`: an asof-dependent function's receipts have the evaluation
+  asof as `asof`, one per requested asof, and are never reused for another asof (memo or
+  store). A function that reads `Inputs::asof` is asof-dependent for that evaluation.
+- Normative fuel: `Budget::used` (the attempt's fuel); each attempt has its own meter, so a
+  cell's fuel is that of its completed attempt whatever the restarts, and the request's fuel
+  bounds the sum of the completed attempts. `EngineBuilder::work_limit` (default
+  `DEFAULT_WORK_FACTOR` = 16 times the fuel) bounds all work, discarded attempts and
+  validation reads included: `EngineError::WorkExceeded`.
+- `Resolver::manifest` (from the store) and `Resolver::evaluation` with the lineage of a
+  computed cell's evaluation, so that a verifier reports `E_INPUT_SUPERSEDED`.
+- `MemoStats::slice_patterns`.
+
+### Changed
+
+- **Breaking:** `Runtime::evaluate` receives the `FunctionDescriptor` (with `order` and
+  `extent`); descriptors are stored and read as `FunctionDescriptor`.
+- **Breaking:** `Answer` is `#[non_exhaustive]`; `Answer::NotCovered { fault }`
+  (`Answer::NOT_COVERED` is the one without a fault).
+- A computed receipt's `asof` also counts slice members, every `T` of `read_asof` and every
+  `to` of `read_versions`; for an asof-dependent function it is the evaluation asof. Its
+  `tx` counts members; with no input receipt (only empty slices) it is the earliest instant.
+- Validation compares slice entries by members hash, then by the members' values (early
+  cutoff); `stored_version_added` also drops the answers whose slice pattern the new version
+  falls into (it reads the version's receipt from the store when slices are memoised).
+- Validation reads are work, not normative fuel. A request that 0.2.0 ran within its fuel
+  runs within it now (each evaluation is charged once, not once per restart).
+- Versions resting on a caught fault, on a read at a transaction time, or on an undeclared
+  `asof()` read are signed and stored as receipts but not kept as computed versions.
+- A backdated correction of an input: recomputing the old receipt through the engine now
+  reports `E_INPUT_SUPERSEDED` (with the lineage), at level signed, where 0.2.0 gave
+  `E_VALUE_MISMATCH`.
+
 ## 0.2.0 (2026-10-24)
 
 On `datumesh-store` 0.3.0 and `datumesh-core` 0.3.3.

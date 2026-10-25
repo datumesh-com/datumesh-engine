@@ -16,6 +16,14 @@
 //! inserted inputs first, so the refusal propagates. Marks are kept only while an evaluation
 //! that began before them is running.
 //!
+//! Slices over stored functions are not in that index (their members are many, and a new
+//! member is in no answer yet): each answer that read one registers the slice object, and an
+//! invalidation with the new version's receipt drops the readers of every registered slice
+//! that contains it (`Slice::contains`); without the receipt, every such reader. Versions
+//! added while evaluations run are kept with their revision, and [`Memo::end`] refuses an
+//! answer one of whose slices contains one added after the evaluation began. Members of
+//! slices over computed functions are in the index like single inputs.
+//!
 //! Correctness does not depend on the memo: a miss validates the store's computed version
 //! (or computes one). The memo only saves that work, so losing it (a restart) is harmless.
 

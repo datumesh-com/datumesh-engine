@@ -15,7 +15,10 @@
 //!   correction changes values all the way up, and when early cutoff stops it at layer 0;
 //! * signing one receipt (`ReceiptBuilder::sign` and its JSON), and storing one
 //!   (`put_receipt`, which verifies it, plus `put_computed`);
-//! * the memo and dirty set's sizes.
+//! * the memo and dirty set's sizes;
+//! * slice reads (0.3.0): the sum over a stored slice of 1,000 and of 100,000 members, cold,
+//!   warm, validated by a fresh engine, and after one member's correction; a slice over a
+//!   computed function of 1,000 members (each a cell evaluated); the memory per slice input.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -415,6 +418,7 @@ fn run(url: &str) {
         println!("{r}");
     }
     let _ = a0;
+    slices(&mut b, url);
     println!(
         "\nThe dirty set holds marks only while an evaluation that began before them runs; at rest it is {}.",
         ge.memo_stats().dirty
@@ -425,6 +429,109 @@ fn run(url: &str) {
         store_count(url, "computed_versions"),
         store_count(url, "versions")
     );
+}
+
+/// Slice reads: m(g, k) stored, g = 0 with 1,000 cells and g = 1 with 100,000; total(g) the
+/// sum over m(g, *). sq(n) computed over the extent 1..1000; sqsum() the sum over sq(*).
+fn slices(b: &mut Bench, url: &str) {
+    use datumesh_engine::{Pattern, SlicePattern};
+    const M: &str = "bench.example.org/m";
+    let m_hash = b.store.put_descriptor(&descriptor("stored", "", &[], &[("g", N), ("k", N)])).unwrap();
+    b.store.bind_name(M, &m_hash, BIND).unwrap();
+    let pattern = |g: Scalar| -> SlicePattern {
+        [("g".to_string(), Pattern::Value(g)), ("k".to_string(), Pattern::Open)].into_iter().collect()
+    };
+    b.function("bench.example.org/total", &[M], &[("g", N)], move |c, i, _| {
+        let members = i.read_slice(M, &pattern(c.args["g"].scalar().unwrap().clone()))?;
+        Ok(num(members.iter().map(|m| int(&m.input.value)).sum::<i128>()))
+    });
+    b.function(
+        "bench.example.org/sq",
+        &[],
+        &[("n", r#"{"extent":{"hi":"1000","lo":"1"},"type":"number","unit":"1","valid":false}"#)],
+        |c, _, _| {
+            let n = int(c.args["n"].scalar().unwrap());
+            Ok(num(n * n))
+        },
+    );
+    b.function("bench.example.org/sqsum", &["bench.example.org/sq"], &[], |_, i, _| {
+        let p: SlicePattern = [("n".to_string(), Pattern::Open)].into_iter().collect();
+        let members = i.read_slice("bench.example.org/sq", &p)?;
+        Ok(num(members.iter().map(|m| int(&m.input.value)).sum::<i128>()))
+    });
+    let m_cell = |g: i64, k: i64| Cell {
+        ns: PUB.into(),
+        fn_name: "m".into(),
+        fn_hash: m_hash.clone(),
+        args: args(&[("g", num(g)), ("k", num(k))]),
+    };
+    let publish = |cell: &Cell, value: i128, tx: &str, e: Option<&Engine>| {
+        let r = ReceiptBuilder::new()
+            .cell(cell.clone())
+            .value(num(value))
+            .valid(Args::new())
+            .asof(tx)
+            .tx(tx)
+            .issued(tx)
+            .publisher(PUB)
+            .signer_host(PUB)
+            .licence("CC0-1.0")
+            .summary("A benchmark value.")
+            .sign(&b.publisher)
+            .unwrap();
+        let h = b.store.put_receipt(&receipt_json(&r)).unwrap();
+        b.store.put_version(&cell.id(), tx, &h).unwrap();
+        if let Some(e) = e {
+            e.stored_version_added(&cell.id());
+        }
+    };
+    let (_, load) = time(|| {
+        for k in 0..1000 {
+            publish(&m_cell(0, k), k as i128, "2024-01-01T00:00:00.000000Z", None);
+        }
+        for k in 0..100_000 {
+            publish(&m_cell(1, k), 1, "2024-01-01T00:00:00.000000Z", None);
+        }
+    });
+    println!("\nSlices: 101,000 stored cells of m(g, k) published in {}.\n", fmt(load));
+    println!("| Slice read | members | cold `get` (first ever) | warm `get` (memo) | fresh engine, validated | after one member's correction | memo bytes per slice reader |");
+    println!("|---|---:|---:|---:|---:|---:|---:|");
+    let asof = "2025-01-01T00:00:00.000000Z";
+    for (g, n) in [(0i64, 1000usize), (1, 100_000)] {
+        let e = b.engine();
+        let r = reference("bench.example.org/total", &[("g", num(g))]);
+        let before = e.memo_stats().approx_bytes;
+        let (a, cold) = time(|| e.get(&r, Some(asof)).unwrap());
+        let bytes = e.memo_stats().approx_bytes - before;
+        let (_, warm) = time(|| e.get(&r, Some(asof)).unwrap());
+        let fresh = b.engine();
+        let (v, validated) = time(|| fresh.get(&r, Some(asof)).unwrap());
+        assert_eq!(v, a);
+        publish(&m_cell(g, 7), 1000, "2024-06-01T00:00:00.000000Z", Some(&e));
+        let (c, corrected) = time(|| e.get(&r, Some(asof)).unwrap());
+        assert_ne!(value(&c), value(&a));
+        println!(
+            "| sum over a stored slice | {n} | {} | {} | {} | {} | {} |",
+            fmt(cold),
+            fmt(warm),
+            fmt(validated),
+            fmt(corrected),
+            bytes
+        );
+    }
+    let e = b.engine();
+    let r = reference("bench.example.org/sqsum", &[]);
+    let (a, cold) = time(|| e.get(&r, Some(asof)).unwrap());
+    assert_eq!(int(&value(&a)), (1..=1000i128).map(|n| n * n).sum::<i128>());
+    let (_, warm) = time(|| e.get(&r, Some(asof)).unwrap());
+    let (_, validated) = time(|| b.engine().get(&r, Some(asof)).unwrap());
+    println!(
+        "| sum over a computed slice (members evaluated, signed, stored) | 1000 | {} | {} | {} | n/a | n/a |",
+        fmt(cold),
+        fmt(warm),
+        fmt(validated)
+    );
+    println!("Rows: manifests {}.", store_count(url, "manifests"));
 }
 
 fn store_count(url: &str, table: &str) -> i64 {

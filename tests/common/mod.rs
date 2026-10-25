@@ -382,7 +382,7 @@ impl World {
             assert!(out.ok, "{test}: {out:?}\n{}", String::from_utf8_lossy(bytes));
             assert_eq!(out.level, Some(Level::Recomputed), "{test}: {out:?}\n{}", String::from_utf8_lossy(bytes));
         }
-        dump(test, &receipts);
+        self.dump(test);
         receipts.len()
     }
 }
@@ -409,29 +409,44 @@ impl Runtime for SharedNative {
     }
 }
 
-/// Writes receipts to `$DATUMESH_ENGINE_DUMP/<test>.jsonl`, each line
-/// `{"hash": receipt hash, "keys": {host: key document text}, "receipt": receipt text}`.
-pub fn dump(test: &str, receipts: &[Vec<u8>]) {
-    let Ok(dir) = std::env::var("DATUMESH_ENGINE_DUMP") else { return };
-    if dir.is_empty() {
-        return;
+impl World {
+    /// Writes every receipt the mesh signed to `$DATUMESH_ENGINE_DUMP/<test>.jsonl`, each line
+    /// `{"hash": receipt hash, "keys": {host: key document text}, "manifests": {entry:
+    /// manifest text}, "receipt": receipt text}`, with the manifest of each slice entry among
+    /// its inputs, from the store.
+    pub fn dump(&self, test: &str) {
+        let Ok(dir) = std::env::var("DATUMESH_ENGINE_DUMP") else { return };
+        if dir.is_empty() {
+            return;
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut out = String::new();
+        for bytes in self.issued_receipts() {
+            let r = Receipt::from_json(&bytes).unwrap();
+            let keys: Vec<(String, Value)> = [MESH, RATES, PRICES, CALC]
+                .iter()
+                .map(|h| (h.to_string(), Value::String(String::from_utf8(key_doc(h, &key_for(h))).unwrap())))
+                .collect();
+            let manifests: Vec<(String, Value)> = r
+                .inputs()
+                .iter()
+                .filter(|e| e.starts_with("slice:"))
+                .map(|e| {
+                    let m = self.store.manifest(e).expect("the manifest of a slice entry is stored");
+                    (e.clone(), Value::String(String::from_utf8(m.into_owned()).unwrap()))
+                })
+                .collect();
+            let line = Value::Object(vec![
+                ("hash".into(), Value::String(r.hash().to_string())),
+                ("keys".into(), Value::Object(keys)),
+                ("manifests".into(), Value::Object(manifests)),
+                ("receipt".into(), Value::String(String::from_utf8(bytes.clone()).unwrap())),
+            ]);
+            out.push_str(&String::from_utf8(line.to_jcs()).unwrap());
+            out.push('\n');
+        }
+        std::fs::write(format!("{dir}/{test}.jsonl"), out).unwrap();
     }
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut out = String::new();
-    for bytes in receipts {
-        let keys: Vec<(String, Value)> = [MESH, RATES, PRICES, CALC]
-            .iter()
-            .map(|h| (h.to_string(), Value::String(String::from_utf8(key_doc(h, &key_for(h))).unwrap())))
-            .collect();
-        let line = Value::Object(vec![
-            ("hash".into(), Value::String(Receipt::from_json(bytes).unwrap().hash().to_string())),
-            ("keys".into(), Value::Object(keys)),
-            ("receipt".into(), Value::String(String::from_utf8(bytes.clone()).unwrap())),
-        ]);
-        out.push_str(&String::from_utf8(line.to_jcs()).unwrap());
-        out.push('\n');
-    }
-    std::fs::write(format!("{dir}/{test}.jsonl"), out).unwrap();
 }
 
 /// The receipt of an answer (panics on NotCovered).

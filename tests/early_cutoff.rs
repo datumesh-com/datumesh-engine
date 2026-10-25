@@ -111,7 +111,7 @@ fn a_backdated_correction_is_answered_and_its_receipt_reused() {
     lineage.sort();
     assert_eq!(lineage, new.inputs().to_vec(), "the receipts read: those of the new receipt");
     assert_eq!(w.issued_receipts().len(), 2);
-    dump("early_cutoff_backdated", &w.issued_receipts());
+    w.dump("early_cutoff_backdated");
 }
 
 #[test]

@@ -23,7 +23,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use datumesh_core::{Arg, Args, Cell, CellRef, Descriptor, ReceiptBuilder, Scalar, SigningKey, Type};
+use datumesh_core::{Arg, Args, Cell, CellRef, FunctionDescriptor, ReceiptBuilder, Scalar, SigningKey, Type};
 use datumesh_engine::native_test::NativeTest;
 use datumesh_engine::{Answer, Budget, Clock, Engine, EvalError, Inputs};
 use datumesh_store::pg_unstable::postgres::{Config, NoTls};
@@ -75,7 +75,7 @@ fn descriptor(lang: &str, body: &str, inputs: &[&str], arg_decls: &[(&str, &str)
         i.join(","),
         a.join(",")
     );
-    Descriptor::from_json(text.as_bytes()).unwrap().canonical()
+    FunctionDescriptor::from_json(text.as_bytes()).unwrap().canonical()
 }
 
 fn receipt_json(r: &datumesh_core::Receipt) -> Vec<u8> {

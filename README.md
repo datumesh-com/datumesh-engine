@@ -140,21 +140,30 @@ With a PostgreSQL 16 server whose role may create databases in `DATABASE_URL`, `
 
 ## Benchmark
 
-`examples/bench.rs` (`cargo run --release --features native-test --example bench`), against PostgreSQL 16 with default settings on the development host (6 vCPU, 15 GB RAM, `synchronous_commit` on), one call at a time; the full run is in `bench/results/2026-10-24-0.2.0.md` (0.1.0's in `bench/results/2026-10-24.md`):
+`examples/bench.rs` (`cargo run --release --features native-test --example bench`), against PostgreSQL 16 with default settings on the development host (6 vCPU, 15 GB RAM, `synchronous_commit` on), one call at a time; the full run is in `bench/results/2026-10-25-0.3.0.md` (0.2.0's and 0.1.0's beside it):
 
 | Operation | p50 | p99 |
 |---|---:|---:|
-| warm `get` stored, by reference (resolving the name: 1 query) | 173 µs | 371 µs |
-| warm `get_cell` stored (pinned: no query) | 5.3 µs | 16 µs |
-| warm `get` computed, by reference (2 name queries) | 373 µs | 757 µs |
-| warm `get_cell` computed (1 name query) | 182 µs | 367 µs |
-| cold `get` computed, first ever (sign, `put_receipt`, `put_computed`) | 5.5 ms | 12.9 ms |
-| `get` computed, empty memo, version in the store (validated) | 1.6 ms | 3.6 ms |
-| cold `get` of a diamond (4 computed cells) | 20 ms | 26 ms |
-| cold `get` of a 1,000-deep chain | 4.53 s | 4.63 s |
-| signing one receipt | 274 µs | 494 µs |
-| storing one receipt (`put_receipt` verifies it) | 2.8 ms | 4.2 ms |
+| warm `get` stored, by reference (resolving the name: 1 query) | 197 µs | 401 µs |
+| warm `get_cell` stored (pinned: no query) | 5.3 µs | 15 µs |
+| warm `get` computed, by reference (2 name queries) | 375 µs | 777 µs |
+| warm `get_cell` computed (1 name query) | 217 µs | 416 µs |
+| cold `get` computed, first ever (sign, `put_receipt`, `put_computed`) | 6.6 ms | 9.2 ms |
+| `get` computed, empty memo, version in the store (validated) | 1.6 ms | 3.0 ms |
+| cold `get` of a diamond (4 computed cells) | 28 ms | 39 ms |
+| cold `get` of a 1,000-deep chain | 5.6 s | 5.8 s |
+| signing one receipt | 290 µs | 547 µs |
+| storing one receipt (`put_receipt` verifies it) | 2.6 ms | 4.0 ms |
 
-A 10,000-cell graph (100 layers of 100, each cell reading two below): built cold in 50 s; one correction of a stored input under it, until the next `get` of the top is correct: 27 s when the change propagates (about 5,000 cells recomputed, signed and stored), 212 ms when early cutoff stops it at the first layer (the rest rechecked from memory). The memo then holds 10,101 answers in about 27 MB (2.7 KB each, the receipt's bytes included); the dirty set is empty at rest (it keeps marks only while an evaluation that began before them runs).
+A 10,000-cell graph (100 layers of 100, each cell reading two below): built cold in 58 s; one correction of a stored input under it, until the next `get` of the top is correct: 29 s when the change propagates, 287 ms when early cutoff stops it at the first layer.
+
+Slice reads (one request each; the sum over a stored slice):
+
+| Members | cold (first ever) | warm (memo) | fresh engine, validated | after one member's correction | memo per reader |
+|---:|---:|---:|---:|---:|---:|
+| 1,000 | 432 ms | 0.43 ms | 278 ms | 252 ms | 0.47 MB |
+| 100,000 | 22.9 s | 0.60 ms | 20.3 s | 29.0 s | 46.7 MB |
+
+A slice over a computed function of 1,000 members (each evaluated, signed and stored): 5.4 s cold, 0.54 ms warm, 453 ms validated by a fresh engine. A stored slice read costs two `slice_members` queries when the memo is on (as of A, and as of the end of time, to know whether the answer holds after A); most of the 100,000-member cost is those queries' receipt bytes (about 57 µs per member).
 
 Licensed under Apache-2.0.

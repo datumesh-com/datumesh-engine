@@ -150,6 +150,8 @@ pub fn datumesh_engine::EngineBuilder::fmt(&self, &mut core::fmt::Formatter<'_>)
 pub datumesh_engine::FnBinding::descriptor: alloc::rcs::arc::Arc<datumesh_core::descriptor::FunctionDescriptor>
 pub datumesh_engine::FnBinding::fn_hash: alloc::string::String
 pub datumesh_engine::FnBinding::start: alloc::string::String
+impl datumesh_engine::FnBinding
+pub fn datumesh_engine::FnBinding::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, alloc::rcs::arc::Arc<datumesh_core::descriptor::FunctionDescriptor>) -> datumesh_engine::FnBinding
 impl core::clone::Clone for datumesh_engine::FnBinding
 pub fn datumesh_engine::FnBinding::clone(&self) -> Self
 impl core::fmt::Debug for datumesh_engine::FnBinding
@@ -236,7 +238,9 @@ impl datumesh_engine::Clock for datumesh_engine::SystemClock
 pub fn datumesh_engine::SystemClock::now(&self) -> alloc::string::String
 pub trait datumesh_engine::Inputs
 pub fn datumesh_engine::Inputs::asof(&mut self) -> alloc::string::String
+pub fn datumesh_engine::Inputs::asof_compare(&mut self, &str) -> core::result::Result<core::cmp::Ordering, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::binding(&mut self, &str, core::option::Option<&str>) -> core::result::Result<core::option::Option<datumesh_engine::FnBinding>, datumesh_engine::EvalError>
+pub fn datumesh_engine::Inputs::binding_peek(&mut self, &str, core::option::Option<&str>) -> core::result::Result<core::option::Option<datumesh_engine::FnBinding>, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read(&mut self, &str, &datumesh_core::model::Args) -> core::result::Result<datumesh_core::model::Scalar, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read_asof(&mut self, &str, &datumesh_core::model::Args, &str) -> core::result::Result<datumesh_engine::Input, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read_cell(&mut self, &str, &datumesh_core::model::Args) -> core::result::Result<datumesh_engine::Input, datumesh_engine::EvalError>

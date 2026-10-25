@@ -100,7 +100,7 @@ fn main() {
 
 fn run(url: &str, rounds: usize) {
     let store = Arc::new(PgStore::connect(url).unwrap());
-    migrate::apply(&*store).unwrap();
+    migrate::apply(&store).unwrap();
     let publisher = SigningKey::from_seed(&[1; 32]);
     let mesh = SigningKey::from_seed(&[9; 32]);
     store.put_namespace(PUB, &key_doc(PUB, &publisher), BIND).unwrap();

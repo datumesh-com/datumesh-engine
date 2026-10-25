@@ -18,6 +18,13 @@ The 1.3 follow-ups. Additive (`API-CHANGES-0.3.1.md`).
 - `FnBinding::new`, for a runtime's tests without a store.
 - `examples/cutoff.rs`: the early-cutoff case of the benchmark, alone and repeated.
 
+### Changed
+
+- On `datumesh-store` 0.3.2: stored slices (and version slices) are read with
+  `slice_values` (each member's value, receipt hash, `tx`, `asof` and cell from the store's
+  columns and index: no receipt bytes) and `slice_changed_after` (whether the answer holds
+  after A: one indexed query, where 0.3.0 read the slice again as of the end of time).
+
 ### Fixed
 
 - A slice over a computed function evaluates its members in key order and stops at the first

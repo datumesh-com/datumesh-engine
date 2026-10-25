@@ -1,13 +1,13 @@
 # datumesh-engine
 
-The [Datumesh](https://datumesh.com) engine: the value of a cell as of a time. `Engine::get` answers with a receipt: for a stored cell, the publisher's receipt from the store, unchanged; for a computed cell, one the engine signs with the mesh's key after evaluating the cell's function through a `Runtime`, from the receipts of the cells it reads. Answers are memoised, computed versions are kept in the store and validated before reuse, and evaluation runs on an explicit stack, so a function may read itself (SecDB-style recursion) to any depth the limit allows. It implements [spec-0.4.0](https://github.com/datumesh-com/datumesh-spec) (slice-as-lineage, transaction-time reads, evaluation faults, normative fuel) on [`datumesh-store`](https://crates.io/crates/datumesh-store) 0.3.1 and [`datumesh-core`](https://crates.io/crates/datumesh-core) 0.3.4. Function languages plug in through `Runtime`; HTTP is not part of it.
+The [Datumesh](https://datumesh.com) engine: the value of a cell as of a time. `Engine::get` answers with a receipt: for a stored cell, the publisher's receipt from the store, unchanged; for a computed cell, one the engine signs with the mesh's key after evaluating the cell's function through a `Runtime`, from the receipts of the cells it reads. Answers are memoised, computed versions are kept in the store and validated before reuse, and evaluation runs on an explicit stack, so a function may read itself (SecDB-style recursion) to any depth the limit allows. It implements [spec-0.4.0](https://github.com/datumesh-com/datumesh-spec) (slice-as-lineage, transaction-time reads, evaluation faults, normative fuel) on [`datumesh-store`](https://crates.io/crates/datumesh-store) 0.3.2 and [`datumesh-core`](https://crates.io/crates/datumesh-core) 0.3.4. Function languages plug in through `Runtime`; HTTP is not part of it.
 
 ## Example
 
 ```toml
 [dependencies]
-datumesh-engine = "0.3.0"
-datumesh-store = "0.3.1"
+datumesh-engine = "0.3.1"
+datumesh-store = "0.3.2"
 datumesh-core = { version = "0.3.4", features = ["sign"] }
 ```
 

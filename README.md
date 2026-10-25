@@ -140,7 +140,7 @@ With a PostgreSQL 16 server whose role may create databases in `DATABASE_URL`, `
 
 ## Benchmark
 
-`examples/bench.rs` (`cargo run --release --features native-test --example bench`), against PostgreSQL 16 with default settings on the development host (6 vCPU, 15 GB RAM, `synchronous_commit` on), one call at a time; the full run is in `bench/results/2026-10-25-0.3.0.md` (0.2.0's and 0.1.0's beside it):
+`examples/bench.rs` (`cargo run --release --features native-test --example bench`), against PostgreSQL 16 with default settings on the development host (6 vCPU, 15 GB RAM, `synchronous_commit` on), one call at a time; the full run is in `bench/results/2026-10-25-0.3.0.md` (0.2.0's and 0.1.0's beside it; 0.3.1's, back to back with 0.2.0 and with the early-cutoff case repeated, in `bench/results/2026-10-26-0.3.1.md`):
 
 | Operation | p50 | p99 |
 |---|---:|---:|
@@ -155,15 +155,15 @@ With a PostgreSQL 16 server whose role may create databases in `DATABASE_URL`, `
 | signing one receipt | 290 µs | 547 µs |
 | storing one receipt (`put_receipt` verifies it) | 2.6 ms | 4.0 ms |
 
-A 10,000-cell graph (100 layers of 100, each cell reading two below): built cold in 58 s; one correction of a stored input under it, until the next `get` of the top is correct: 29 s when the change propagates, 287 ms when early cutoff stops it at the first layer.
+A 10,000-cell graph (100 layers of 100, each cell reading two below): built cold in 58 s; one correction of a stored input under it, until the next `get` of the top is correct: 29 s when the change propagates, about 200 ms when early cutoff stops it at the first layer (0.3.1; 0.3.0 was 62% slower than 0.2.0 there, 0.3.1 is about 11% slower: see the 0.3.1 results).
 
 Slice reads (one request each; the sum over a stored slice):
 
 | Members | cold (first ever) | warm (memo) | fresh engine, validated | after one member's correction | memo per reader |
 |---:|---:|---:|---:|---:|---:|
-| 1,000 | 432 ms | 0.43 ms | 278 ms | 252 ms | 0.47 MB |
-| 100,000 | 22.9 s | 0.60 ms | 20.3 s | 29.0 s | 46.7 MB |
+| 1,000 | 339 ms | 0.43 ms | 123 ms | 191 ms | 0.47 MB |
+| 100,000 | 13.0 s | 0.58 ms | 7.9 s | 16.3 s | 46.7 MB |
 
-A slice over a computed function of 1,000 members (each evaluated, signed and stored): 5.4 s cold, 0.54 ms warm, 453 ms validated by a fresh engine. A stored slice read costs two `slice_members` queries when the memo is on (as of A, and as of the end of time, to know whether the answer holds after A); most of the 100,000-member cost is those queries' receipt bytes (about 57 µs per member).
+A slice over a computed function of 1,000 members (each evaluated, signed and stored): 5.4 s cold, 0.54 ms warm, 453 ms validated by a fresh engine. (0.3.1 on store 0.3.2.) A stored slice read is one `slice_values` query (values, hashes and cells without receipt bytes) and, when the memo is on, one `slice_changed_after` query; 0.3.0 read the members' receipt bytes twice.
 
 Licensed under Apache-2.0.

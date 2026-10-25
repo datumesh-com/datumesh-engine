@@ -17,8 +17,9 @@ pub(crate) const MAX_CELLS: u128 = 1_048_576;
 pub(crate) enum Spec {
     /// The cells of a function matching a pattern.
     Cells { pattern: SlicePattern },
-    /// The versions of one stored cell with `tx` in `[from, to]`.
-    Versions { cell: Cell, from: String, to: String },
+    /// The versions of one stored cell with `tx` in `[from, to]` (the slice object has the
+    /// cell and `from`; `to` is an asof candidate).
+    Versions { to: String },
 }
 
 /// Two lexical values of `ty` in the type's order (SPEC 15.13): numbers numerically, dates
@@ -149,12 +150,8 @@ pub(crate) fn spec_of(slice: &Slice) -> Option<Spec> {
     let Value::Object(m) = &v else { return None };
     let get = |k: &str| m.iter().find(|(n, _)| n == k).map(|(_, x)| x);
     if slice.is_version_slice() {
-        let cell = Cell::from_value(get("cell")?).ok()?;
-        return Some(Spec::Versions {
-            cell,
-            from: get("from")?.as_str()?.to_string(),
-            to: get("to")?.as_str()?.to_string(),
-        });
+        Cell::from_value(get("cell")?).ok()?;
+        return Some(Spec::Versions { to: get("to")?.as_str()?.to_string() });
     }
     let Value::Object(args) = get("args")? else { return None };
     let mut pattern = BTreeMap::new();

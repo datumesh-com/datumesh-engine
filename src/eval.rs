@@ -824,54 +824,35 @@ impl<'e> Req<'e> {
                     "versions() of a computed function: versions are of stored cells",
                 )))
             }
-            (Spec::Cells { .. }, false) => {
-                let found = self.eng.store.slice_members(&slice, asof).map_err(store_err("slice_members"))?;
-                for m in &found {
-                    members.push(self.member(&m.version.receipt_hash, &m.receipt)?);
+            (Spec::Cells { .. } | Spec::Versions { .. }, false) => {
+                // Values, hashes, tx and asof from the store's columns and its typed-argument
+                // index (store 0.3.2): no receipt bytes; the receipts are not needed to read a
+                // slice, only to sign what is read.
+                let found = self.eng.store.slice_values(&slice, asof).map_err(store_err("slice_values"))?;
+                for v in found {
+                    members.push(MemberRec {
+                        id: v.version.cell_id,
+                        hash: v.version.receipt_hash,
+                        value: v.value,
+                        args: v.cell.args,
+                        tx: v.version.tx,
+                        asof: v.version.asof,
+                    });
                 }
-                // Holding past the asof: when nothing answers later (the members as of the end
-                // of time are these), else at the asof only. Versions stored later are the
-                // dirty set's.
-                hi = if self.eng.memo.enabled() {
-                    let later =
-                        self.eng.store.slice_members(&slice, MAX_INSTANT).map_err(store_err("slice_members"))?;
-                    let same = later.len() == found.len()
-                        && later.iter().zip(&found).all(|(a, b)| a.version.receipt_hash == b.version.receipt_hash);
-                    if same {
-                        None
-                    } else {
-                        Some(just_after(asof))
-                    }
+                // Holding past the asof: when no version of a matching cell answers later, else
+                // at the asof only. Versions stored later are the dirty set's.
+                hi = if self.eng.memo.enabled()
+                    && self.eng.store.slice_changed_after(&slice, asof).map_err(store_err("slice_changed_after"))?
+                {
+                    Some(just_after(asof))
                 } else {
                     None
                 };
-                lo = members.iter().map(|m| m.asof.clone()).max();
-                memo = true;
-            }
-            (Spec::Versions { cell, from, to }, false) => {
-                let id = cell.id();
-                let found =
-                    self.eng.store.versions_between(&id, from, to, asof).map_err(store_err("versions_between"))?;
-                for m in &found {
-                    members.push(self.member(&m.version.receipt_hash, &m.receipt)?);
-                }
-                hi = if self.eng.memo.enabled() {
-                    let later = self
-                        .eng
-                        .store
-                        .versions_between(&id, from, to, MAX_INSTANT)
-                        .map_err(store_err("versions_between"))?;
-                    let same = later.len() == found.len()
-                        && later.iter().zip(&found).all(|(a, b)| a.version.receipt_hash == b.version.receipt_hash);
-                    if same {
-                        None
-                    } else {
-                        Some(just_after(asof))
-                    }
-                } else {
-                    None
+                let to = match &spec {
+                    Spec::Versions { to, .. } => Some(to.clone()),
+                    Spec::Cells { .. } => None,
                 };
-                lo = members.iter().map(|m| m.asof.clone()).chain(std::iter::once(to.clone())).max();
+                lo = members.iter().map(|m| m.asof.clone()).chain(to).max();
                 memo = true;
             }
         }
@@ -895,20 +876,6 @@ impl<'e> Req<'e> {
         });
         self.slices.insert(key, s.clone());
         Ok(SliceOutcome::Ready(s))
-    }
-
-    /// A stored member: its receipt parsed (cached by hash).
-    fn member(&self, hash: &str, bytes: &[u8]) -> Result<MemberRec, EvalError> {
-        let p = self.eng.parsed(hash, bytes).map_err(EvalError::Store)?;
-        let r = &p.receipt;
-        Ok(MemberRec {
-            id: r.cell().id(),
-            hash: hash.to_string(),
-            value: r.value().clone(),
-            args: r.cell().args.clone(),
-            tx: r.tx().to_string(),
-            asof: r.asof().to_string(),
-        })
     }
 
     /// A stored receipt by hash, parsed (cached).
@@ -1577,7 +1544,7 @@ impl Inputs for Reader<'_, '_> {
                 )));
             }
             let slice = versions_slice(&cell, from, to).map_err(EvalError::InvalidInput)?;
-            let spec = Spec::Versions { cell, from: from.to_string(), to: to.to_string() };
+            let spec = Spec::Versions { to: to.to_string() };
             let s = self.slice_read(fn_name, Arc::new(slice), desc, spec)?;
             Ok(s.members.iter().map(MemberRec::input).collect())
         })();

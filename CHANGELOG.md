@@ -2,6 +2,40 @@
 
 All notable changes to `datumesh-engine`.
 
+## 0.3.1 (unreleased)
+
+The 1.3 follow-ups. Additive (`API-CHANGES-0.3.1.md`).
+
+### Added
+
+- `Inputs::binding_peek(fn_name, at)` (provided: `binding`): a binding looked up without
+  being relied on: no asof candidate, no dependency of the answer on the name.
+- `Inputs::asof_compare(t)` (provided: through `asof`): `t` against the evaluation asof
+  without making the evaluation asof-dependent when the answer cannot change later: a `t` at
+  or before the asof becomes a candidate for the receipt's `asof` (so every asof the receipt
+  answers or is validated at gives the same answer, and it recomputes at its own); a `t`
+  after it makes the evaluation asof-dependent.
+- `FnBinding::new`, for a runtime's tests without a store.
+- `examples/cutoff.rs`: the early-cutoff case of the benchmark, alone and repeated.
+
+### Fixed
+
+- A slice over a computed function evaluates its members in key order and stops at the first
+  without a value (SPEC 15.12, 15.13): later members are neither evaluated nor charged (the
+  vector `formula-eval/member-fault-caught` now has the spec's fuel, 7, through the engine;
+  0.3.0 gave 16).
+- A charge exceeding both the fuel and the work limit is `BudgetExceeded`, the normative
+  error, not `WorkExceeded`.
+- `E_FORMULA_FUTURE` is kept when an input has no value: a runtime's `Fault(Future)` stands
+  over the absence when the engine saw a time after the asof (`read_asof`, `read_versions`,
+  `asof_compare`) or the runtime read the asof; times are checked by `read_asof` and
+  `read_versions` even after an absence. (The formula crate's engine fuzz, 100,000 bodies: 0
+  such cases, 12 with 0.3.0.)
+- The early-cutoff slowdown of 0.3.0: whether a function is asof-dependent is cached per
+  function hash (a runtime may take long to say: the native test runtime hashed the
+  descriptor on every frame, 15% of the case); answers, names and bindings are found without
+  allocating keys; name maps are shared when nothing is added.
+
 ## 0.3.0 (2026-10-25)
 
 On `datumesh-store` 0.3.1 and `datumesh-core` 0.3.4 (spec-0.4.0). Breaking

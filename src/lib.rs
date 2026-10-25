@@ -63,8 +63,9 @@
 //! (`Store::slice_members`); of a computed one, the cells of its declared `extent` within the
 //! pattern (a range over a `date` or integer `number` argument without an extent: every day
 //! or integer), each a computed cell the engine answers like any input, memoised, with the
-//! cycle and depth rules (a member on the evaluation stack is a [`EngineError::Cycle`]); when
-//! one has no value the read is the fault `E_FORMULA_ABSENT`. A slice read is one `inputs`
+//! cycle and depth rules (a member on the evaluation stack is a [`EngineError::Cycle`]),
+//! evaluated in key order up to the first without a value, which makes the read the fault
+//! `E_FORMULA_ABSENT` (later members are neither evaluated nor charged). A slice read is one `inputs`
 //! entry `slice:<slice id>:<members hash>`; its manifest is stored (`put_manifest`) with the
 //! receipts, and served by [`Engine`] as a resolver. [`Inputs::read_versions`] reads a
 //! version slice of a stored cell, [`Inputs::read_asof`] a cell as of a transaction time `T`
@@ -90,6 +91,11 @@
 //! as of its own asof (SPEC 5.5: a mesh MUST NOT serve it as `ok` for another). A function
 //! that reads the asof without declaring it is not kept as a computed version at all. A
 //! reader of such a cell is not itself asof-dependent: its version validates by its inputs.
+//!
+//! [`Inputs::asof_compare`] compares a time with the asof without that dependence when the
+//! answer cannot change later (a time at or before the asof becomes an asof candidate of the
+//! receipt; a time after it makes the evaluation asof-dependent), and
+//! [`Inputs::binding_peek`] looks a binding up without relying on it (since 0.3.1).
 //!
 //! A function that reads nothing has `tx` = `asof` = `0001-01-01T00:00:00.000000Z`: its value
 //! does not depend on time.

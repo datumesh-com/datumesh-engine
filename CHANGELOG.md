@@ -2,7 +2,7 @@
 
 All notable changes to `datumesh-engine`.
 
-## 0.3.1 (unreleased)
+## 0.3.1 (2026-10-26)
 
 The 1.3 follow-ups. Additive (`API-CHANGES-0.3.1.md`).
 

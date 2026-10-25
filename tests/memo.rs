@@ -53,7 +53,7 @@ fn a_second_get_makes_no_runtime_call() {
     assert_eq!(w.calls(TOTAL), 1);
     assert_eq!(w.db().count("computed_versions"), 1);
     // Before the inputs' asofs: no value.
-    assert_eq!(e.get(&r, Some(&t(16, 9))).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get(&r, Some(&t(16, 9))).unwrap(), Answer::NOT_COVERED);
     w.verify_all_issued(&e, "memo_second_get");
 }
 
@@ -175,7 +175,7 @@ fn names_resolve_as_of_the_asof_and_rebinding_later_keeps_historical_answers() {
     assert_eq!(receipt_of(&w.engine().get(&r, Some(&t(28, 0))).unwrap()).hash(), later.hash());
     assert_eq!(receipt_of(&e.get(&r, Some(&t(26, 0))).unwrap()).hash(), after.hash());
     // Between the rebinding and the new function's first version: no value.
-    assert_eq!(e.get(&r, Some(&t(27, 0))).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get(&r, Some(&t(27, 0))).unwrap(), Answer::NOT_COVERED);
     w.verify_all_issued(&e, "memo_names");
 }
 

@@ -1,7 +1,7 @@
 //! Checks of requests: slices, and arguments against a function's signature (as SPEC 10.1
 //! step 7.2 checks a receipt's cell, so that every receipt the engine signs recomputes).
 
-use datumesh_core::{Arg, Args, Cell, Descriptor, Error, ErrorCode, Scalar};
+use datumesh_core::{Arg, Args, Cell, Error, ErrorCode, FunctionDescriptor, Scalar};
 
 use crate::error::EngineError;
 
@@ -22,7 +22,7 @@ pub(crate) fn check_no_slice(args: &Args) -> Result<(), EngineError> {
 /// The cell's arguments are exactly the declared ones, each of the declared type: first an
 /// undeclared argument (`E_ARG_UNKNOWN`), then an unbound one (`E_ARG_MISSING`), then a type
 /// (`E_ARG_TYPE`), each in JCS order of names.
-pub(crate) fn check_args(cell: &Cell, d: &Descriptor) -> Result<(), Error> {
+pub(crate) fn check_args(cell: &Cell, d: &FunctionDescriptor) -> Result<(), Error> {
     let decl = &d.signature.args;
     for k in cell.args.keys() {
         if !decl.contains_key(k) {
@@ -47,7 +47,7 @@ pub(crate) fn check_args(cell: &Cell, d: &Descriptor) -> Result<(), Error> {
 }
 
 /// The valid-time arguments of a cell (SPEC 8.1 `valid`).
-pub(crate) fn valid_args(cell: &Cell, d: &Descriptor) -> Args {
+pub(crate) fn valid_args(cell: &Cell, d: &FunctionDescriptor) -> Args {
     cell.args
         .iter()
         .filter(|(k, _)| d.signature.args.get(*k).is_some_and(|x| x.valid))

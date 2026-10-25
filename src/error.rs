@@ -120,6 +120,14 @@ pub enum EvalError {
     /// slice, an unknown or missing argument, a type that differs from the signature). Added to
     /// the brief's list: it is the runtime's mistake, not the engine's or the store's.
     InvalidInput(datumesh_core::Error),
+    /// A formula evaluation fault (SPEC 15.11, 15.12): the cell has no value, deterministically
+    /// (`E_FORMULA_DIV_ZERO`, `E_FORMULA_DOMAIN`, `E_FORMULA_RANGE`, `E_FORMULA_EMPTY`,
+    /// `E_FORMULA_ABSENT`, `E_FORMULA_FUTURE`). Returned by a runtime, it makes the answer
+    /// [`Answer::NotCovered`](crate::Answer::NotCovered) with the fault, and nothing is
+    /// stored for the cell. Returned by a read (an input that faulted, a computed slice with a
+    /// member without a value, a transaction time after the asof), the runtime may catch it
+    /// where its language allows. Since 0.3.0.
+    Fault(datumesh_core::Fault),
 }
 
 impl fmt::Display for EvalError {
@@ -136,6 +144,7 @@ impl fmt::Display for EvalError {
             EvalError::Suspended => f.write_str("evaluation suspended until an input is available"),
             EvalError::InputNotCovered { cell_id } => write!(f, "input cell {cell_id} has no value as of the asof"),
             EvalError::InvalidInput(e) => write!(f, "invalid input cell: {e}"),
+            EvalError::Fault(c) => write!(f, "evaluation fault {c}"),
         }
     }
 }
@@ -177,10 +186,19 @@ pub enum EngineError {
         /// The limit.
         limit: usize,
     },
-    /// The request's fuel ran out. Nothing was stored for the request.
+    /// The request's fuel ran out: its normative fuel (SPEC 15.12) exceeds the limit. Nothing
+    /// was stored for the request.
     BudgetExceeded {
         /// The fuel the request had.
         fuel: u64,
+    },
+    /// The request's work ran out: every evaluation attempt (those a restart discarded
+    /// included) and the engine's validation reads, which bound its total cost beyond the
+    /// normative fuel ([`EngineBuilder::work_limit`](crate::EngineBuilder::work_limit)).
+    /// Nothing was stored for the request. Since 0.3.0.
+    WorkExceeded {
+        /// The work limit.
+        limit: u64,
     },
     /// An input's function name has no binding as of the request's asof.
     NameUnresolved {
@@ -221,6 +239,9 @@ impl fmt::Display for EngineError {
             EngineError::DepthExceeded { limit } => write!(f, "evaluation deeper than the limit of {limit}"),
             EngineError::BudgetExceeded { fuel } => {
                 write!(f, "evaluation needs more than its fuel of {fuel}; nothing was stored")
+            }
+            EngineError::WorkExceeded { limit } => {
+                write!(f, "evaluation needs more work than its limit of {limit}; nothing was stored")
             }
             EngineError::NameUnresolved { fn_name, asof } => write!(f, "{fn_name} has no binding as of {asof}"),
             EngineError::Store(e) => e.fmt(f),

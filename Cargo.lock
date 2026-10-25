@@ -157,9 +157,9 @@ dependencies = [
 
 [[package]]
 name = "datumesh-core"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d1c9a31f29904e6166c4d0c30abebf10e207e7bbcab544ffe508574da8ec756"
+checksum = "aae008799b4dfe8b0f8a3596c2950c37ff46eacf4a83f0da0ebf4639473abc9f"
 dependencies = [
  "curve25519-dalek",
  "sha2",
@@ -177,9 +177,9 @@ dependencies = [
 
 [[package]]
 name = "datumesh-store"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7782828a04eacd035c5092cf4811a9570569f88e1548e1157cf7dec68e766ff1"
+checksum = "470b5e2fd55cd40c9c961039fe6fb51b0f252bc31fe18fbefd6a60eb1cd55fb2"
 dependencies = [
  "datumesh-core",
  "postgres",

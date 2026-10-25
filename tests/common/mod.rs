@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use datumesh_core::json::{self, Value};
 use datumesh_core::{
-    verify, Arg, Args, Cell, CellRef, Descriptor, Keys, Level, Receipt, ReceiptBuilder, Resolver, Scalar, SigningKey,
+    verify, Arg, Args, Cell, CellRef, Descriptor, FunctionDescriptor, Keys, Level, Receipt, ReceiptBuilder, Resolver, Scalar, SigningKey,
     Type,
 };
 use datumesh_engine::native_test::NativeTest;
@@ -393,9 +393,18 @@ impl Runtime for SharedNative {
     fn lang(&self) -> &str {
         datumesh_engine::native_test::LANG
     }
-    fn evaluate(&self, d: &Descriptor, c: &Cell, i: &mut dyn Inputs, b: &mut Budget) -> Result<Scalar, EvalError> {
+    fn evaluate(
+        &self,
+        d: &FunctionDescriptor,
+        c: &Cell,
+        i: &mut dyn Inputs,
+        b: &mut Budget,
+    ) -> Result<Scalar, EvalError> {
         let rt = self.0.read().unwrap().clone();
         rt.evaluate(d, c, i, b)
+    }
+    fn asof_dependent(&self, d: &FunctionDescriptor) -> bool {
+        self.0.read().unwrap().asof_dependent(d)
     }
 }
 
@@ -428,14 +437,14 @@ pub fn dump(test: &str, receipts: &[Vec<u8>]) {
 pub fn receipt_of(a: &Answer) -> Receipt {
     match a {
         Answer::Receipt(b) => Receipt::from_json(b).unwrap(),
-        Answer::NotCovered => panic!("not covered"),
+        _ => panic!("not covered"),
     }
 }
 
 pub fn bytes_of(a: &Answer) -> Vec<u8> {
     match a {
         Answer::Receipt(b) => b.clone(),
-        Answer::NotCovered => panic!("not covered"),
+        _ => panic!("not covered"),
     }
 }
 

@@ -121,7 +121,7 @@
 //! | `Engine::get` result | Meaning | Envelope (SPEC 5.5), in spirit |
 //! |---|---|---|
 //! | `Ok(Answer::Receipt(bytes))` | the receipt answering as of A (`asof <= A`) | `ok`; `trust` `primary` when the host of `computed_by` is the host of `cell.ns` and `inputs` is empty, `verified` for a receipt the engine computed |
-//! | `Ok(Answer::NotCovered)` | the name has no binding as of A, the function hash is unknown, a stored cell has no version answering as of A, or a computed cell read an input with none | `not_covered` |
+//! | `Ok(Answer::NOT_COVERED)` | the name has no binding as of A, the function hash is unknown, a stored cell has no version answering as of A, or a computed cell read an input with none | `not_covered` |
 //! | `Err(Invalid(e))` | a malformed request (asof, slice, arguments against the signature) | `bad_request`, `error` = `e.code()` |
 //! | `Err(NameUnresolved { .. })` | an input's name has no binding as of A | `error`, `E_FN_UNAVAILABLE` |
 //! | `Err(UndeclaredInput { .. })` | a function read a name it does not declare | `error`, `E_INPUT_UNDECLARED` |
@@ -148,7 +148,7 @@
 //! let cell = CellRef::from_json(br#"{"args":{},"fn":"total","ns":"shop.example.com"}"#).unwrap();
 //! match engine.get(&cell, None).unwrap() {
 //!     Answer::Receipt(bytes) => println!("{}", String::from_utf8_lossy(&bytes)),
-//!     Answer::NotCovered => println!("not covered"),
+//!     _ => println!("not covered"),
 //! }
 //! ```
 //!
@@ -173,6 +173,7 @@ mod sign;
 pub use clock::{Clock, SystemClock};
 pub use engine::{
     Answer, Engine, EngineBuilder, MemoStats, SummaryFn, DEFAULT_DEPTH_LIMIT, DEFAULT_FUEL, DEFAULT_MEMO_CAPACITY,
+    DEFAULT_WORK_FACTOR,
 };
 pub use error::{ConfigError, EngineError, EvalError, StoreError};
-pub use runtime::{Budget, Inputs, Runtime};
+pub use runtime::{Budget, FnBinding, Input, Inputs, Member, Pattern, Runtime, SlicePattern};

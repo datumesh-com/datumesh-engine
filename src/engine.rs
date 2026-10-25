@@ -6,7 +6,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use datumesh_core::{lexical, Cell, CellRef, Descriptor, KeyDoc, Resolver, Scalar, SigningKey};
+use datumesh_core::{lexical, Cell, CellRef, Fault, FunctionDescriptor, KeyDoc, Resolver, Scalar, SigningKey};
 use datumesh_store::Store;
 
 use crate::cache::{Cache, Parsed};
@@ -21,19 +21,33 @@ use crate::runtime::Runtime;
 pub const DEFAULT_DEPTH_LIMIT: usize = 10_000;
 /// The default fuel of a request: runtime steps plus input reads.
 pub const DEFAULT_FUEL: u64 = 10_000_000;
+/// The default work limit of a request, as a multiple of its fuel.
+pub const DEFAULT_WORK_FACTOR: u64 = 16;
 /// The default memo capacity, in entries.
 pub const DEFAULT_MEMO_CAPACITY: usize = 1_000_000;
 
 /// The answer to "the value of this cell as of A".
+#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Answer {
     /// The receipt that answers, canonical JSON text: for a stored cell the publisher's
     /// receipt as the store holds it; for a computed cell one signed by the engine.
     Receipt(Vec<u8>),
-    /// Nothing answers as of A: the function is unknown then, a stored cell has no version
-    /// answering then, or a computed cell reads such an input (and its runtime did not handle
-    /// it).
-    NotCovered,
+    /// Nothing answers as of A, and no receipt is given.
+    ///
+    /// `fault: None`: the function is unknown then, a stored cell has no version answering
+    /// then, or a computed cell reads such an input. `fault: Some(code)`: the cell is a
+    /// computed cell whose evaluation faulted (SPEC 15.12): it has no value, deterministically
+    /// (the envelope's `fault`, SPEC 5.5). Since 0.3.0 the variant carries `fault`.
+    NotCovered {
+        /// The evaluation fault, if the cell has no value because of one.
+        fault: Option<Fault>,
+    },
+}
+
+impl Answer {
+    /// `NotCovered` without a fault.
+    pub const NOT_COVERED: Answer = Answer::NotCovered { fault: None };
 }
 
 /// The function computing a computed receipt's `summary`.
@@ -48,6 +62,7 @@ pub struct EngineBuilder {
     pub(crate) runtimes: Vec<Arc<dyn Runtime>>,
     pub(crate) depth_limit: usize,
     pub(crate) fuel: u64,
+    pub(crate) work_limit: Option<u64>,
     pub(crate) memo_capacity: usize,
     pub(crate) licence: String,
     pub(crate) summary: Option<Arc<SummaryFn>>,
@@ -85,6 +100,15 @@ impl EngineBuilder {
     /// The fuel of each request: runtime steps plus input reads (default 10,000,000).
     pub fn fuel(mut self, fuel: u64) -> Self {
         self.fuel = fuel;
+        self
+    }
+
+    /// The work limit of each request: every evaluation attempt (those discarded by a restart
+    /// included) and the engine's validation reads, in fuel units (default 16 times the
+    /// fuel). It bounds the total cost of a request beyond its normative fuel
+    /// ([`EngineError::WorkExceeded`](crate::EngineError::WorkExceeded)). Since 0.3.0.
+    pub fn work_limit(mut self, units: u64) -> Self {
+        self.work_limit = Some(units);
         self
     }
 
@@ -152,6 +176,7 @@ impl EngineBuilder {
             runtimes,
             depth_limit: self.depth_limit,
             fuel: self.fuel,
+            work_limit: self.work_limit.unwrap_or(self.fuel.saturating_mul(DEFAULT_WORK_FACTOR)),
             licence: self.licence,
             summary: self.summary,
             clock: self.clock,
@@ -177,12 +202,13 @@ pub struct Engine {
     pub(crate) runtimes: HashMap<String, Arc<dyn Runtime>>,
     pub(crate) depth_limit: usize,
     pub(crate) fuel: u64,
+    pub(crate) work_limit: u64,
     pub(crate) licence: String,
     pub(crate) summary: Option<Arc<SummaryFn>>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) memo: Memo,
     /// Parsed descriptors by function hash (immutable: content-addressed).
-    pub(crate) descriptors: Cache<Arc<Descriptor>>,
+    pub(crate) descriptors: Cache<Arc<FunctionDescriptor>>,
     /// Parsed receipts by hash (immutable: content-addressed).
     pub(crate) receipts: Cache<Arc<Parsed>>,
     /// Evaluations run one at a time (single-flight); answers from the memo do not wait.
@@ -258,6 +284,7 @@ impl Engine {
             runtimes: Vec::new(),
             depth_limit: DEFAULT_DEPTH_LIMIT,
             fuel: DEFAULT_FUEL,
+            work_limit: None,
             memo_capacity: DEFAULT_MEMO_CAPACITY,
             licence: "CC-BY-4.0".into(),
             summary: None,
@@ -277,7 +304,7 @@ impl Engine {
         let fn_name = format!("{}/{}", cell.ns, cell.fn_name);
         let Some(fn_hash) = self.store.resolve_name(&fn_name, &a).map_err(|e| StoreError::new("resolve_name", e))?
         else {
-            return Ok(Answer::NotCovered);
+            return Ok(Answer::NOT_COVERED);
         };
         let resolved = cell.resolve(&fn_hash).map_err(EngineError::Invalid)?;
         self.answer(&resolved, &a, &now)
@@ -297,7 +324,7 @@ impl Engine {
     /// The answer for a resolved cell as of `a`; `now` is the request's clock reading.
     fn answer(&self, cell: &Cell, a: &str, now: &str) -> Result<Answer, EngineError> {
         let Some(desc) = self.descriptor_of(&cell.fn_hash)? else {
-            return Ok(Answer::NotCovered);
+            return Ok(Answer::NOT_COVERED);
         };
         check_args(cell, &desc).map_err(EngineError::Invalid)?;
         let id = cell.id();
@@ -328,7 +355,7 @@ impl Engine {
         };
         Ok(match done {
             Done::Value(ans) => Answer::Receipt(ans.bytes.to_vec()),
-            Done::NotCovered | Done::Unsigned(_) => Answer::NotCovered,
+            Done::NotCovered | Done::Unsigned(_) => Answer::NOT_COVERED,
         })
     }
 
@@ -338,7 +365,7 @@ impl Engine {
     fn evaluate_cell(
         &self,
         cell: &Cell,
-        desc: Arc<Descriptor>,
+        desc: Arc<FunctionDescriptor>,
         a: &str,
         now: &str,
         unsigned: bool,
@@ -399,12 +426,12 @@ impl Engine {
     }
 
     /// The parsed descriptor of `fn_hash`, cached.
-    pub(crate) fn descriptor_of(&self, fn_hash: &str) -> Result<Option<Arc<Descriptor>>, EngineError> {
+    pub(crate) fn descriptor_of(&self, fn_hash: &str) -> Result<Option<Arc<FunctionDescriptor>>, EngineError> {
         if let Some(d) = self.descriptors.get(fn_hash) {
             return Ok(Some(d));
         }
         let Some(bytes) = self.store.descriptor(fn_hash) else { return Ok(None) };
-        let d = Arc::new(Descriptor::from_json(&bytes).map_err(EngineError::Invalid)?);
+        let d = Arc::new(FunctionDescriptor::from_json(&bytes).map_err(EngineError::Invalid)?);
         self.descriptors.insert(fn_hash.to_string(), d.clone());
         Ok(Some(d))
     }

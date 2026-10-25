@@ -1,11 +1,11 @@
 //! [`NativeTest`] (feature `native-test`): a runtime of Rust closures keyed by function hash,
 //! for tests and benchmarks. Its language is `native_test`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
-use datumesh_core::{Cell, Descriptor, Scalar};
+use datumesh_core::{Cell, FunctionDescriptor, Scalar};
 
 use crate::error::EvalError;
 use crate::runtime::{Budget, Inputs, Runtime};
@@ -21,6 +21,7 @@ pub type NativeFn = dyn Fn(&Cell, &mut dyn Inputs, &mut Budget) -> Result<Scalar
 #[derive(Clone, Default)]
 pub struct NativeTest {
     fns: HashMap<String, Arc<NativeFn>>,
+    asof_dependent: HashSet<String>,
 }
 
 impl NativeTest {
@@ -38,6 +39,13 @@ impl NativeTest {
         self.fns.insert(fn_hash.into(), Arc::new(f));
         self
     }
+
+    /// Declares the function whose descriptor hashes to `fn_hash` asof-dependent
+    /// ([`Runtime::asof_dependent`]). Since 0.3.0.
+    pub fn set_asof_dependent(&mut self, fn_hash: impl Into<String>) -> &mut Self {
+        self.asof_dependent.insert(fn_hash.into());
+        self
+    }
 }
 
 impl fmt::Debug for NativeTest {
@@ -51,9 +59,13 @@ impl Runtime for NativeTest {
         LANG
     }
 
+    fn asof_dependent(&self, descriptor: &FunctionDescriptor) -> bool {
+        self.asof_dependent.contains(&descriptor.hash())
+    }
+
     fn evaluate(
         &self,
-        _descriptor: &Descriptor,
+        _descriptor: &FunctionDescriptor,
         cell: &Cell,
         inputs: &mut dyn Inputs,
         budget: &mut Budget,

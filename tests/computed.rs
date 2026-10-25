@@ -84,9 +84,9 @@ fn an_input_with_no_value_leaves_the_cell_without_one_even_if_the_runtime_catche
     w.publish(&fx, "3", &t(15, 16));
     // price(bolt) has no version: total has no value either.
     let total = w.cellref(TOTAL, &[("item", text("bolt"))]);
-    assert_eq!(e.get(&total, Some(&t(20, 0))).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get(&total, Some(&t(20, 0))).unwrap(), Answer::NOT_COVERED);
     let fallback = w.cellref("calc.example.net/fallback", &[("item", text("bolt"))]);
-    assert_eq!(e.get(&fallback, Some(&t(20, 0))).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get(&fallback, Some(&t(20, 0))).unwrap(), Answer::NOT_COVERED);
     assert_eq!(w.db().count("computed_versions"), 0);
     // A function with no inputs: tx and asof are the earliest instant.
     let c = receipt_of(&e.get(&w.cellref("calc.example.net/constant", &[]), Some(&t(20, 0))).unwrap());

@@ -44,17 +44,17 @@ fn not_covered_before_the_first_version_and_for_unknown_functions() {
     let e = w.engine();
     let cell = w.cell(FX, &[("quote", text("USD"))]);
     let r = w.cellref(FX, &[("quote", text("USD"))]);
-    assert_eq!(e.get(&r, Some(&t(16, 0))).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get(&r, Some(&t(16, 0))).unwrap(), Answer::NOT_COVERED);
     w.publish(&cell, "1.0892", &t(15, 16));
-    assert_eq!(e.get(&r, Some(&t(15, 15))).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get(&r, Some(&t(15, 15))).unwrap(), Answer::NOT_COVERED);
     assert!(matches!(e.get(&r, Some(&t(15, 16))).unwrap(), Answer::Receipt(_)));
     // An unknown function, and a known one asked as of before its name was bound.
     let unknown = w.cellref("rates.example.org/nope", &[]);
-    assert_eq!(e.get(&unknown, Some(&t(16, 0))).unwrap(), Answer::NotCovered);
-    assert_eq!(e.get(&r, Some("2019-12-31T23:59:59.999999Z")).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get(&unknown, Some(&t(16, 0))).unwrap(), Answer::NOT_COVERED);
+    assert_eq!(e.get(&r, Some("2019-12-31T23:59:59.999999Z")).unwrap(), Answer::NOT_COVERED);
     let mut pinned = cell.clone();
     pinned.fn_hash = "0".repeat(64);
-    assert_eq!(e.get_cell(&pinned, Some(&t(16, 0))).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get_cell(&pinned, Some(&t(16, 0))).unwrap(), Answer::NOT_COVERED);
 }
 
 #[test]
@@ -80,8 +80,8 @@ fn a_late_signed_receipt_does_not_answer_between_its_tx_and_its_asof() {
     let r = w.cellref(FX, &[("quote", text("USD"))]);
     // The first version itself late-signed: nothing answers before its asof.
     let h1 = w.publish_late(&cell, "1.0892", &t(15, 16), &t(16, 9));
-    assert_eq!(e.get(&r, Some(&t(15, 16))).unwrap(), Answer::NotCovered);
-    assert_eq!(e.get(&r, Some(&t(16, 8))).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get(&r, Some(&t(15, 16))).unwrap(), Answer::NOT_COVERED);
+    assert_eq!(e.get(&r, Some(&t(16, 8))).unwrap(), Answer::NOT_COVERED);
     assert_eq!(bytes_of(&e.get(&r, Some(&t(16, 9))).unwrap()), w.stored_bytes(&h1));
     // A late-signed correction: the first version answers until its asof.
     let h2 = w.publish_late(&cell, "1.09", &t(18, 10), &t(20, 0));
@@ -98,11 +98,11 @@ fn no_asof_means_the_clock_reading_and_a_cellref_asof_is_used() {
     let mut r = w.cellref(FX, &[("quote", text("USD"))]);
     let h1 = w.publish(&cell, "1.0892", &t(15, 16));
     w.clock.set(&t(15, 15));
-    assert_eq!(e.get(&r, None).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get(&r, None).unwrap(), Answer::NOT_COVERED);
     w.clock.set(&t(15, 16));
     assert_eq!(bytes_of(&e.get(&r, None).unwrap()), w.stored_bytes(&h1));
     r.asof = Some(t(15, 15));
-    assert_eq!(e.get(&r, None).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get(&r, None).unwrap(), Answer::NOT_COVERED);
     // The asof argument wins over the reference's.
     assert_eq!(bytes_of(&e.get(&r, Some(&t(15, 16))).unwrap()), w.stored_bytes(&h1));
 }
@@ -183,7 +183,7 @@ impl datumesh_engine::Runtime for Named {
     }
     fn evaluate(
         &self,
-        _: &datumesh_core::Descriptor,
+        _: &datumesh_core::FunctionDescriptor,
         _: &datumesh_core::Cell,
         _: &mut dyn datumesh_engine::Inputs,
         _: &mut datumesh_engine::Budget,

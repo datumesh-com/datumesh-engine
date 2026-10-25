@@ -17,7 +17,7 @@ A publisher's two stored functions (net price and tax per item), a computed func
 use std::sync::Arc;
 
 use datumesh_core::json::Value;
-use datumesh_core::{verify, Arg, Args, Cell, CellRef, Descriptor, Keys, Level, ReceiptBuilder, Resolver, Scalar, SigningKey, Type};
+use datumesh_core::{verify, Arg, Args, Cell, CellRef, FunctionDescriptor, Keys, Level, ReceiptBuilder, Resolver, Scalar, SigningKey, Type};
 use datumesh_engine::{Answer, Budget, Engine, EvalError, Inputs, Runtime};
 use datumesh_store::{migrate, PgStore, Store};
 
@@ -28,7 +28,7 @@ impl Runtime for Sum {
     fn lang(&self) -> &str {
         "sum"
     }
-    fn evaluate(&self, d: &Descriptor, cell: &Cell, inputs: &mut dyn Inputs, budget: &mut Budget) -> Result<Scalar, EvalError> {
+    fn evaluate(&self, d: &FunctionDescriptor, cell: &Cell, inputs: &mut dyn Inputs, budget: &mut Budget) -> Result<Scalar, EvalError> {
         let mut total: i128 = 0;
         for name in &d.inputs {
             budget.charge(1)?;

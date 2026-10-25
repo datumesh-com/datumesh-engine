@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use datumesh_core::{lexical, Cell, Descriptor, Error as CoreError, ErrorCode, Receipt, ReceiptBuilder, Scalar};
+use datumesh_core::{lexical, Cell, Error as CoreError, ErrorCode, FunctionDescriptor, Receipt, ReceiptBuilder, Scalar};
 
 use crate::cache::Parsed;
 use crate::check::{check_args, valid_args};
@@ -85,7 +85,7 @@ pub(crate) enum Done {
 enum Lookup {
     Ready(Done),
     /// A computed cell not answered yet: it needs a frame.
-    Eval(Arc<Descriptor>),
+    Eval(Arc<FunctionDescriptor>),
 }
 
 struct Fresh {
@@ -112,7 +112,7 @@ enum State {
 struct Frame {
     cell: Cell,
     id: String,
-    desc: Arc<Descriptor>,
+    desc: Arc<FunctionDescriptor>,
     state: State,
     /// Evaluate without signing (the top cell of `Resolver::evaluate`).
     unsigned: bool,
@@ -142,7 +142,7 @@ impl<'e> Req<'e> {
             done: HashMap::new(),
             fresh: Vec::new(),
             learned: Vec::new(),
-            budget: Budget::new(eng.fuel),
+            budget: Budget::with_work(eng.fuel, eng.work_limit),
         }
     }
 
@@ -191,7 +191,7 @@ impl<'e> Req<'e> {
     }
 
     /// A cell's answer if it can be had without evaluating a function.
-    fn lookup(&mut self, cell: &Cell, id: &str, desc: Arc<Descriptor>) -> Result<Lookup, EvalError> {
+    fn lookup(&mut self, cell: &Cell, id: &str, desc: Arc<FunctionDescriptor>) -> Result<Lookup, EvalError> {
         if let Some(d) = self.done.get(id) {
             return Ok(Lookup::Ready(d.clone()));
         }
@@ -259,7 +259,7 @@ impl<'e> Req<'e> {
     }
 
     /// Answers `cell` (a computed cell with descriptor `desc`).
-    pub(crate) fn run(&mut self, cell: Cell, desc: Arc<Descriptor>, unsigned: bool) -> Result<Done, EngineError> {
+    pub(crate) fn run(&mut self, cell: Cell, desc: Arc<FunctionDescriptor>, unsigned: bool) -> Result<Done, EngineError> {
         let id = cell.id();
         let state = if unsigned { State::Eval { cand: None } } else { State::Start };
         let mut stack = vec![Frame { cell, id: id.clone(), desc, state, unsigned }];
@@ -412,7 +412,7 @@ impl<'e> Req<'e> {
         if self.resolve(&name).map_err(|e| engine_error(e, id))?.as_deref() != Some(cell.fn_hash.as_str()) {
             return Ok(Check::Differs);
         }
-        self.budget.charge_shared(1).map_err(|e| engine_error(e, id))?;
+        self.budget.work(1).map_err(|e| engine_error(e, id))?;
         let Some(desc) = self.eng.descriptor_of(&cell.fn_hash)? else { return Ok(Check::Differs) };
         match self.lookup(cell, id, desc).map_err(|e| engine_error(e, id))? {
             Lookup::Ready(Done::Value(a)) if a.hash == h || &a.value == value => {
@@ -453,7 +453,7 @@ impl<'e> Req<'e> {
         let fail = |e: EvalError| engine_error(e, &f.id);
         // Exhaustion wins over anything the runtime made of it.
         if budget.is_exhausted() {
-            return Err(EngineError::BudgetExceeded { fuel: budget.limit() });
+            return Err(exhausted(&budget));
         }
         match stop {
             Some(Stop::Pending(cell, id, desc)) => return Ok(Step::Push(cell, id, desc)),
@@ -634,13 +634,13 @@ enum Step {
     /// The frame changed state: step it again.
     Again,
     Done(Done),
-    Push(Cell, String, Arc<Descriptor>),
+    Push(Cell, String, Arc<FunctionDescriptor>),
 }
 
 /// How an input of a version compares as of the asof.
 enum Check {
     Same(Arc<Ans>, String, String),
-    Pending(Cell, String, Arc<Descriptor>),
+    Pending(Cell, String, Arc<FunctionDescriptor>),
     Differs,
 }
 
@@ -648,7 +648,7 @@ enum Check {
 /// wins over whatever the runtime returns.
 enum Stop {
     /// An input to evaluate first.
-    Pending(Cell, String, Arc<Descriptor>),
+    Pending(Cell, String, Arc<FunctionDescriptor>),
     /// An input with no value: neither has this cell.
     NotCovered,
     Fatal(EvalError),
@@ -657,7 +657,7 @@ enum Stop {
 /// The [`Inputs`] of one run of a frame's runtime.
 struct Reader<'r, 'e> {
     req: &'r mut Req<'e>,
-    desc: &'r Descriptor,
+    desc: &'r FunctionDescriptor,
     budget: Budget,
     /// The answers read, by receipt hash.
     read: BTreeMap<String, Arc<Ans>>,
@@ -720,6 +720,30 @@ impl Reader<'_, '_> {
 }
 
 impl Inputs for Reader<'_, '_> {
+    fn read_cell(&mut self, _: &str, _: &datumesh_core::Args) -> Result<crate::runtime::Input, EvalError> {
+        Err(EvalError::Runtime("read_cell: not implemented yet".into()))
+    }
+    fn read_asof(&mut self, _: &str, _: &datumesh_core::Args, _: &str) -> Result<crate::runtime::Input, EvalError> {
+        Err(EvalError::Runtime("read_asof: not implemented yet".into()))
+    }
+    fn read_slice(&mut self, _: &str, _: &crate::runtime::SlicePattern) -> Result<Vec<crate::runtime::Member>, EvalError> {
+        Err(EvalError::Runtime("read_slice: not implemented yet".into()))
+    }
+    fn read_versions(
+        &mut self,
+        _: &str,
+        _: &datumesh_core::Args,
+        _: &str,
+        _: &str,
+    ) -> Result<Vec<crate::runtime::Input>, EvalError> {
+        Err(EvalError::Runtime("read_versions: not implemented yet".into()))
+    }
+    fn binding(&mut self, _: &str, _: Option<&str>) -> Result<Option<crate::runtime::FnBinding>, EvalError> {
+        Err(EvalError::Runtime("binding: not implemented yet".into()))
+    }
+    fn asof(&mut self) -> String {
+        self.req.asof.clone()
+    }
     fn read(&mut self, fn_name: &str, args: &datumesh_core::Args) -> Result<Scalar, EvalError> {
         match &self.stop {
             Some(Stop::Pending(..)) => return Err(EvalError::Suspended),
@@ -761,6 +785,14 @@ fn merge_names<'a>(
         Arc::make_mut(&mut acc).extend(own);
     }
     acc
+}
+
+/// The request's error for an exhausted budget: its fuel, or its work.
+pub(crate) fn exhausted(b: &Budget) -> EngineError {
+    match b.exhausted() {
+        crate::runtime::Exhausted::Work => EngineError::WorkExceeded { limit: b.work_limit() },
+        _ => EngineError::BudgetExceeded { fuel: b.limit() },
+    }
 }
 
 /// An evaluation error as the request's error, for the cell being evaluated.

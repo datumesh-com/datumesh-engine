@@ -109,7 +109,7 @@ fn fib_above_its_base_cases_answers_from_the_start_of_its_names_binding() {
     assert_eq!(receipt_of(&later).hash(), first.hash());
     assert_eq!(w.calls(FIB), 0);
     // Before the binding the name means nothing.
-    assert_eq!(e.get(&fib(10), Some("2019-12-31T23:59:59.999999Z")).unwrap(), Answer::NotCovered);
+    assert_eq!(e.get(&fib(10), Some("2019-12-31T23:59:59.999999Z")).unwrap(), Answer::NOT_COVERED);
     w.verify_all_issued(&e, "recursion_fib_binding");
 }
 

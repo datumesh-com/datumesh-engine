@@ -150,7 +150,7 @@ fn memo_and_validation_agree_under_a_stream_of_new_versions() {
     let keys = all_keys();
     let value = |a: &Answer| match a {
         Answer::Receipt(_) => Some(receipt_of(a).value().clone()),
-        Answer::NotCovered => None,
+        _ => None,
     };
     for (asof, answer) in &seen {
         let want = fresh.get(&top, Some(asof)).unwrap();

@@ -155,7 +155,7 @@ fn pinned(store: &PgStore, name: &str, a: &[(&str, Scalar)]) -> Cell {
 fn value(a: &Answer) -> Scalar {
     match a {
         Answer::Receipt(b) => datumesh_core::Receipt::from_json(b).unwrap().value().clone(),
-        Answer::NotCovered => panic!("not covered"),
+        _ => panic!("not covered"),
     }
 }
 

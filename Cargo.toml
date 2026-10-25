@@ -70,3 +70,15 @@ required-features = ["native-test"]
 [[test]]
 name = "conformance"
 required-features = ["native-test"]
+
+[[test]]
+name = "slices"
+required-features = ["native-test"]
+
+[[test]]
+name = "asof_dependent"
+required-features = ["native-test"]
+
+[[test]]
+name = "faults"
+required-features = ["native-test"]

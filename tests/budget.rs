@@ -111,3 +111,80 @@ fn a_budget_on_its_own() {
     assert!(b.is_exhausted());
     assert!(b.charge(0).is_err(), "exhausted for the rest of the request");
 }
+
+/// top() reads c1 .. c5 (computed, each charging 3 of its own) and charges 2 of its own;
+/// each run of top records the fuel its attempt used when it completes.
+fn fan(w: &mut World, used: std::sync::Arc<std::sync::Mutex<Vec<u64>>>) {
+    let names: Vec<String> = (1..=5).map(|k| format!("calc.example.net/c{k}")).collect();
+    for n in &names {
+        w.native_fn(n, &[], &[], |_, _, b| {
+            b.charge(3)?;
+            Ok(num("1"))
+        });
+    }
+    let reads: Vec<&str> = names.iter().map(String::as_str).collect();
+    let names2 = names.clone();
+    w.native_fn("calc.example.net/top", &reads, &[], move |_, i, b| {
+        let mut total = num("0");
+        for n in &names2 {
+            total = add(&total, &i.read(n, &args(&[]))?);
+        }
+        b.charge(2)?;
+        used.lock().unwrap().push(b.used());
+        Ok(total)
+    });
+}
+
+#[test]
+fn normative_fuel_does_not_depend_on_restarts() {
+    // top's evaluation: 1 (the native call) + 5 reads + 2 = 8, each ci 1 + 3 = 4: 28 in all,
+    // whether top was restarted five times (its inputs missing, cold) or ran once (its inputs
+    // answered first).
+    let used = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut cold = World::new();
+    fan(&mut cold, used.clone());
+    let top = cold.cellref("calc.example.net/top", &[]);
+    assert_eq!(receipt_of(&cold.engine_with(|b| b.fuel(28)).get(&top, Some(&t(20, 0))).unwrap()).value(), &num("5"));
+    assert_eq!(cold.calls("calc.example.net/top"), 6, "five restarts");
+    assert_eq!(*used.lock().unwrap(), [8], "the completed run's fuel");
+    // One unit less: exceeded, cold as warm.
+    let mut short = World::new();
+    fan(&mut short, std::sync::Arc::default());
+    match short.engine_with(|b| b.fuel(27)).get(&top, Some(&t(20, 0))) {
+        Err(EngineError::BudgetExceeded { fuel: 27 }) => {}
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(short.db().count("receipts"), 0);
+    // Warm: the inputs answered first, top runs once with the same fuel.
+    let used_warm = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut warm = World::new();
+    fan(&mut warm, used_warm.clone());
+    let e = warm.engine();
+    for k in 1..=5 {
+        e.get(&warm.cellref(&format!("calc.example.net/c{k}"), &[]), Some(&t(20, 0))).unwrap();
+    }
+    assert_eq!(receipt_of(&e.get(&top, Some(&t(20, 0))).unwrap()).value(), &num("5"));
+    assert_eq!(warm.calls("calc.example.net/top"), 1);
+    assert_eq!(*used_warm.lock().unwrap(), [8]);
+    // The same receipt, cold or warm.
+    assert_eq!(
+        receipt_of(&cold.engine().get(&top, Some(&t(20, 0))).unwrap()).value(),
+        receipt_of(&e.get(&top, Some(&t(20, 0))).unwrap()).value()
+    );
+}
+
+#[test]
+fn the_work_limit_bounds_restarts() {
+    // Cold, top's discarded attempts cost 2 + 3 + 4 + 5 + 6 = 20 besides its last run's 8 and
+    // the inputs' 20: 48 units of work. A work limit of 40 stops it; the fuel would not.
+    let mut w = World::new();
+    fan(&mut w, std::sync::Arc::default());
+    let top = w.cellref("calc.example.net/top", &[]);
+    match w.engine_with(|b| b.fuel(1000).work_limit(40)).get(&top, Some(&t(20, 0))) {
+        Err(EngineError::WorkExceeded { limit: 40 }) => {}
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(w.db().count("receipts"), 0);
+    assert!(w.engine_with(|b| b.fuel(1000).work_limit(48)).get(&top, Some(&t(20, 0))).is_ok());
+    assert_eq!(datumesh_engine::DEFAULT_WORK_FACTOR, 16);
+}

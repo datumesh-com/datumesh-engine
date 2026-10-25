@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use datumesh_core::json::{self, Value};
 use datumesh_core::{
-    verify, Arg, Args, Cell, CellRef, Descriptor, FunctionDescriptor, Keys, Level, Receipt, ReceiptBuilder, Resolver, Scalar, SigningKey,
+    verify, Arg, Args, Cell, CellRef, FunctionDescriptor, Keys, Level, Receipt, ReceiptBuilder, Resolver, Scalar, SigningKey,
     Type,
 };
 use datumesh_engine::native_test::NativeTest;
@@ -191,7 +191,8 @@ pub fn descriptor(lang: &str, body: &str, inputs: &[&str], arg_decls: &[(&str, &
         inputs.join(","),
         args.join(",")
     );
-    let d = Descriptor::from_json(text.as_bytes()).unwrap();
+    // A FunctionDescriptor: an argument declaration may carry an `extent` (spec-0.4.0).
+    let d = FunctionDescriptor::from_json(text.as_bytes()).unwrap();
     d.canonical()
 }
 
@@ -475,6 +476,46 @@ pub fn add(a: &Scalar, b: &Scalar) -> Scalar {
     let x: i128 = a.lexical().parse().unwrap();
     let y: i128 = b.lexical().parse().unwrap();
     num(&(x + y).to_string())
+}
+
+/// An exact decimal sum of integer values.
+pub fn sum<'a>(values: impl IntoIterator<Item = &'a Scalar>) -> Scalar {
+    num(&values.into_iter().map(int).sum::<i128>().to_string())
+}
+
+pub fn date(s: &str) -> Scalar {
+    Scalar::from_lexical(Type::Date, s).unwrap()
+}
+
+pub fn instant(s: &str) -> Scalar {
+    Scalar::from_lexical(Type::Instant, s).unwrap()
+}
+
+/// A slice pattern.
+pub fn pattern(pairs: &[(&str, datumesh_engine::Pattern)]) -> datumesh_engine::SlicePattern {
+    pairs.iter().map(|(k, p)| (k.to_string(), p.clone())).collect()
+}
+
+pub fn open() -> datumesh_engine::Pattern {
+    datumesh_engine::Pattern::Open
+}
+
+pub fn bound(v: Scalar) -> datumesh_engine::Pattern {
+    datumesh_engine::Pattern::Value(v)
+}
+
+pub fn range(lo: Scalar, hi: Scalar) -> datumesh_engine::Pattern {
+    datumesh_engine::Pattern::Range { lo, hi }
+}
+
+/// Row counts of the tables a request may write.
+pub fn rows(w: &World) -> [i64; 4] {
+    [w.db().count("receipts"), w.db().count("computed_versions"), w.db().count("versions"), w.db().count("manifests")]
+}
+
+/// The NotCovered answer carrying `fault`.
+pub fn faulted(fault: datumesh_core::Fault) -> Answer {
+    Answer::NotCovered { fault: Some(fault) }
 }
 
 pub fn int(s: &Scalar) -> i128 {

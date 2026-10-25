@@ -69,7 +69,12 @@ pub struct Input {
 
 impl Input {
     /// An input (for a runtime's own tests).
-    pub fn new(value: Scalar, receipt_hash: impl Into<String>, tx: impl Into<String>, asof: impl Into<String>) -> Input {
+    pub fn new(
+        value: Scalar,
+        receipt_hash: impl Into<String>,
+        tx: impl Into<String>,
+        asof: impl Into<String>,
+    ) -> Input {
         Input { value, receipt_hash: receipt_hash.into(), tx: tx.into(), asof: asof.into() }
     }
 }

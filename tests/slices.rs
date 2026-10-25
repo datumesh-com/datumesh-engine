@@ -96,7 +96,12 @@ fn a_slice_read_is_one_input_entry_with_its_manifest_and_recomputes() {
     // No input receipt: tx is the earliest instant; asof the start of temp's binding.
     assert_eq!((empty.tx(), empty.asof()), (MIN_INSTANT, BIND_TX));
     assert_eq!(e.get(&w.cellref(FIRST, &[("region", text("east"))]), Some(&t(20, 0))).unwrap(), faulted(Fault::Absent));
-    let out = verify(&bytes_of(&e.get(&north(&w, TOTAL), Some(&t(20, 0))).unwrap()), &all_keys(), Some(&*e as &dyn Resolver), None);
+    let out = verify(
+        &bytes_of(&e.get(&north(&w, TOTAL), Some(&t(20, 0))).unwrap()),
+        &all_keys(),
+        Some(&*e as &dyn Resolver),
+        None,
+    );
     assert_eq!(out.level, Some(Level::Recomputed), "{out:?}");
     w.verify_all_issued(&e, "slices_stored");
 }
@@ -127,7 +132,10 @@ fn a_correction_to_a_member_dirties_the_reader_and_the_old_receipt_still_verifie
     // Earlier asofs: the old receipt, from the memo or a fresh engine validating it.
     assert_eq!(e.get(&north(&w, TOTAL), Some(&t(20, 0))).unwrap(), old);
     assert_eq!(w.engine().get(&north(&w, TOTAL), Some(&t(20, 12))).unwrap(), old);
-    assert_eq!(w.engine().get(&north(&w, TOTAL), Some(&t(23, 0))).unwrap(), e.get(&north(&w, TOTAL), Some(&t(23, 0))).unwrap());
+    assert_eq!(
+        w.engine().get(&north(&w, TOTAL), Some(&t(23, 0))).unwrap(),
+        e.get(&north(&w, TOTAL), Some(&t(23, 0))).unwrap()
+    );
     assert_eq!(w.calls(TOTAL), 2, "validated, not recomputed");
     // The old receipt still recomputes, at its own asof (before the correction).
     let out = verify(&bytes_of(&old), &all_keys(), Some(&*w.engine() as &dyn Resolver), None);
@@ -286,7 +294,8 @@ fn a_slice_over_a_computed_function_evaluates_and_memoises_its_extent() {
     let r = receipt_of(&e.get(&w.cellref(SUMSQ, &[("hi", num("3")), ("lo", num("2"))]), Some(&t(20, 0))).unwrap());
     assert_eq!(r.value(), &num("13"));
     // A range wider than the extent enumerates the extent only; one below it is empty.
-    let wide = receipt_of(&e.get(&w.cellref(SUMSQ, &[("hi", num("100")), ("lo", num("-5"))]), Some(&t(20, 0))).unwrap());
+    let wide =
+        receipt_of(&e.get(&w.cellref(SUMSQ, &[("hi", num("100")), ("lo", num("-5"))]), Some(&t(20, 0))).unwrap());
     assert_eq!(wide.value(), &num("30"));
     let none = receipt_of(&e.get(&w.cellref(SUMSQ, &[("hi", num("0")), ("lo", num("-5"))]), Some(&t(20, 0))).unwrap());
     assert_eq!(none.value(), &num("0"));
@@ -298,7 +307,10 @@ fn a_slice_over_a_computed_function_evaluates_and_memoises_its_extent() {
     // A fresh engine validates the stored versions: no runtime call.
     w.reset_calls();
     let fresh = w.engine();
-    assert_eq!(receipt_of(&fresh.get(&w.cellref("calc.example.net/sumall", &[]), Some(&t(21, 0))).unwrap()).hash(), all.hash());
+    assert_eq!(
+        receipt_of(&fresh.get(&w.cellref("calc.example.net/sumall", &[]), Some(&t(21, 0))).unwrap()).hash(),
+        all.hash()
+    );
     assert_eq!(w.calls(SQ) + w.calls("calc.example.net/sumall"), 0);
     w.verify_all_issued(&e, "slices_computed");
 }
@@ -323,13 +335,18 @@ fn a_member_on_the_evaluation_stack_is_a_cycle() {
     let mut w = World::new();
     const LOOP: &str = "calc.example.net/loop";
     const SUM: &str = "calc.example.net/loopsum";
-    w.native_fn(LOOP, &[SUM], &[("n", r#"{"extent":["1","2"],"type":"number","unit":"1","valid":false}"#)], |c, i, _| {
-        let n = int(c.args["n"].scalar().unwrap());
-        if n == 2 {
-            return i.read(SUM, &args(&[]));
-        }
-        Ok(num("1"))
-    });
+    w.native_fn(
+        LOOP,
+        &[SUM],
+        &[("n", r#"{"extent":["1","2"],"type":"number","unit":"1","valid":false}"#)],
+        |c, i, _| {
+            let n = int(c.args["n"].scalar().unwrap());
+            if n == 2 {
+                return i.read(SUM, &args(&[]));
+            }
+            Ok(num("1"))
+        },
+    );
     w.native_fn(SUM, &[LOOP], &[], |_, i, _| {
         let members = i.read_slice(LOOP, &pattern(&[("n", open())]))?;
         Ok(sum(members.iter().map(|m| &m.input.value)))
@@ -348,12 +365,15 @@ fn a_computed_member_without_a_value_makes_the_read_absent() {
     // that catches it (as `otherwise` does) has a value.
     let mut w = World::new();
     const HALF: &str = "calc.example.net/half";
-    w.native_fn(HALF, &[], &[("n", r#"{"extent":["1","2","3"],"type":"number","unit":"1","valid":false}"#)], |c, _, _| {
-        match int(c.args["n"].scalar().unwrap()) {
+    w.native_fn(
+        HALF,
+        &[],
+        &[("n", r#"{"extent":["1","2","3"],"type":"number","unit":"1","valid":false}"#)],
+        |c, _, _| match int(c.args["n"].scalar().unwrap()) {
             2 => Err(EvalError::Fault(Fault::DivZero)),
             n => Ok(num(&n.to_string())),
-        }
-    });
+        },
+    );
     w.native_fn("calc.example.net/halfsum", &[HALF], &[], |_, i, _| {
         let members = i.read_slice(HALF, &pattern(&[("n", open())]))?;
         Ok(sum(members.iter().map(|m| &m.input.value)))
@@ -376,7 +396,10 @@ fn a_computed_member_without_a_value_makes_the_read_absent() {
     assert!(caught.inputs().is_empty(), "the slice was not read to the end");
     assert_eq!(caught.asof(), BIND_TX, "the binding of half was relied on");
     // A slice without the faulting member is fine.
-    assert_eq!(receipt_of(&e.get(&w.cellref("calc.example.net/one", &[]), Some(&t(20, 0))).unwrap()).value(), &num("1"));
+    assert_eq!(
+        receipt_of(&e.get(&w.cellref("calc.example.net/one", &[]), Some(&t(20, 0))).unwrap()).value(),
+        &num("1")
+    );
     w.verify_all_issued(&e, "slices_absent");
 }
 
@@ -488,7 +511,10 @@ fn malformed_slice_reads_are_the_runtimes_mistake() {
         Ok(num("0"))
     });
     w.native_fn("calc.example.net/badrange", &[TEMP], &[], |_, i, _| {
-        i.read_slice(TEMP, &pattern(&[("region", Pattern::Range { lo: num("1"), hi: num("2") }), ("station", open())]))?;
+        i.read_slice(
+            TEMP,
+            &pattern(&[("region", Pattern::Range { lo: num("1"), hi: num("2") }), ("station", open())]),
+        )?;
         Ok(num("0"))
     });
     let e = w.engine();

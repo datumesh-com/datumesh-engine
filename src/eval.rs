@@ -348,7 +348,13 @@ impl<'e> Req<'e> {
     }
 
     /// A cell's answer as of `asof` if it can be had without evaluating a function.
-    fn lookup(&mut self, cell: &Cell, id: &str, desc: Arc<FunctionDescriptor>, asof: &str) -> Result<Lookup, EvalError> {
+    fn lookup(
+        &mut self,
+        cell: &Cell,
+        id: &str,
+        desc: Arc<FunctionDescriptor>,
+        asof: &str,
+    ) -> Result<Lookup, EvalError> {
         if let Some(d) = self.done_at(asof, id) {
             return Ok(Lookup::Ready(d.clone()));
         }
@@ -412,7 +418,12 @@ impl<'e> Req<'e> {
     }
 
     /// Answers `cell` (a computed cell with descriptor `desc`) as of the request's asof.
-    pub(crate) fn run(&mut self, cell: Cell, desc: Arc<FunctionDescriptor>, unsigned: bool) -> Result<Done, EngineError> {
+    pub(crate) fn run(
+        &mut self,
+        cell: Cell,
+        desc: Arc<FunctionDescriptor>,
+        unsigned: bool,
+    ) -> Result<Done, EngineError> {
         let id = cell.id();
         let asof = self.asof.clone();
         let state = if unsigned { State::Eval { cand: None } } else { State::Start };
@@ -500,7 +511,9 @@ impl<'e> Req<'e> {
         let asof = f.asof.clone();
         while let Some(u) = ans.inputs.get(*idx) {
             let check = match u {
-                Use::Cell { id, cell, hash, value, at } => self.check_use(cell, id, hash, value, at.as_deref(), &asof)?,
+                Use::Cell { id, cell, hash, value, at } => {
+                    self.check_use(cell, id, hash, value, at.as_deref(), &asof)?
+                }
                 Use::Slice(old) => {
                     let old_members: Vec<(String, Scalar)> =
                         old.members.iter().map(|m| (m.id.clone(), m.value.clone())).collect();
@@ -786,7 +799,8 @@ impl<'e> Req<'e> {
                 // of time are these), else at the asof only. Versions stored later are the
                 // dirty set's.
                 hi = if self.eng.memo.enabled() {
-                    let later = self.eng.store.slice_members(&slice, MAX_INSTANT).map_err(store_err("slice_members"))?;
+                    let later =
+                        self.eng.store.slice_members(&slice, MAX_INSTANT).map_err(store_err("slice_members"))?;
                     let same = later.len() == found.len()
                         && later.iter().zip(&found).all(|(a, b)| a.version.receipt_hash == b.version.receipt_hash);
                     if same {
@@ -1082,7 +1096,8 @@ impl<'e> Req<'e> {
         let asof = if how.dependent {
             f.asof.clone()
         } else {
-            let a = self.binding_asof(facts.latest.clone(), &facts.names, &f.asof).map_err(|e| engine_error(e, &f.id))?;
+            let a =
+                self.binding_asof(facts.latest.clone(), &facts.names, &f.asof).map_err(|e| engine_error(e, &f.id))?;
             a.max(tx.clone())
         };
         let (lo, hi) = if how.dependent {

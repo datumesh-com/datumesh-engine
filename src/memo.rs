@@ -32,6 +32,9 @@ pub(crate) struct Memo {
     state: Mutex<State>,
 }
 
+/// A slice and the cells whose answers read it.
+type Readers = (Arc<Slice>, HashSet<String>);
+
 #[derive(Default)]
 struct State {
     rev: u64,
@@ -51,7 +54,7 @@ struct State {
     /// The slices over stored functions that held answers read, by function hash and slice
     /// id, with the cells whose answers read them: a new stored version of a cell the slice
     /// contains drops them.
-    patterns: HashMap<String, HashMap<String, (Arc<Slice>, HashSet<String>)>>,
+    patterns: HashMap<String, HashMap<String, Readers>>,
     pattern_count: usize,
     /// Stored versions added while evaluations ran, with the revision: their receipt (none
     /// when it could not be read), to refuse answers of slices they fall into.
@@ -245,7 +248,10 @@ impl Memo {
                             }
                         })
                         .sum::<usize>()
-                    + a.names.iter().map(|((k, t), v)| k.len() + t.as_ref().map_or(0, String::len) + v.len() + 64).sum::<usize>()
+                    + a.names
+                        .iter()
+                        .map(|((k, t), v)| k.len() + t.as_ref().map_or(0, String::len) + v.len() + 64)
+                        .sum::<usize>()
                         / Arc::strong_count(&a.names).max(1);
             }
         }
@@ -254,7 +260,12 @@ impl Memo {
         }
         bytes += s.dirty.keys().map(|k| k.len() + 40).sum::<usize>();
         bytes += s.stale.values().flatten().map(|a| a.bytes.len() + 400).sum::<usize>();
-        bytes += s.patterns.values().flat_map(HashMap::values).map(|(p, r)| p.canonical().len() + r.len() * 80 + 120).sum::<usize>();
+        bytes += s
+            .patterns
+            .values()
+            .flat_map(HashMap::values)
+            .map(|(p, r)| p.canonical().len() + r.len() * 80 + 120)
+            .sum::<usize>();
         MemoStats {
             slice_patterns: s.pattern_count,
             stale: s.stale_count,

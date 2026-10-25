@@ -6,7 +6,9 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use datumesh_core::{lexical, Cell, CellRef, Evaluation, Fault, FunctionDescriptor, KeyDoc, Resolver, Scalar, SigningKey};
+use datumesh_core::{
+    lexical, Cell, CellRef, Evaluation, Fault, FunctionDescriptor, KeyDoc, Resolver, Scalar, SigningKey,
+};
 use datumesh_store::Store;
 
 use crate::cache::{Cache, Parsed};
@@ -378,7 +380,9 @@ impl Engine {
         let mut req = Req::new(self, a, now);
         let result = (|| {
             if !unsigned {
-                if let Some(ans) = req.memo_hit(&cell.id(), &req.asof()).map_err(|e| crate::eval::engine_error(e, &cell.id()))? {
+                if let Some(ans) =
+                    req.memo_hit(&cell.id(), &req.asof()).map_err(|e| crate::eval::engine_error(e, &cell.id()))?
+                {
                     return Ok(Done::Value(ans));
                 }
             }

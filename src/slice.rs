@@ -65,12 +65,20 @@ pub(crate) fn cells_slice(
     let decl = &desc.signature.args;
     for k in pattern.keys() {
         if !decl.contains_key(k) {
-            return Err(invalid(ErrorCode::ArgUnknown, format!("$.args.{k}"), "the function declares no such argument"));
+            return Err(invalid(
+                ErrorCode::ArgUnknown,
+                format!("$.args.{k}"),
+                "the function declares no such argument",
+            ));
         }
     }
     for k in decl.keys() {
         if !pattern.contains_key(k) {
-            return Err(invalid(ErrorCode::ArgMissing, format!("$.args.{k}"), "a declared argument is not in the pattern"));
+            return Err(invalid(
+                ErrorCode::ArgMissing,
+                format!("$.args.{k}"),
+                "a declared argument is not in the pattern",
+            ));
         }
     }
     let mut args = Vec::new();
@@ -95,7 +103,11 @@ pub(crate) fn cells_slice(
                     return Err(invalid(ErrorCode::ArgType, path, "a range's ends are of the argument's type"));
                 }
                 if matches!(ty, Type::Boolean | Type::Blob) {
-                    return Err(invalid(ErrorCode::CanonType, path, format!("a {} argument has no range", ty.as_str())));
+                    return Err(invalid(
+                        ErrorCode::CanonType,
+                        path,
+                        format!("a {} argument has no range", ty.as_str()),
+                    ));
                 }
                 Value::Object(vec![
                     ("hi".into(), Value::String(hi.lexical().into())),
@@ -107,7 +119,11 @@ pub(crate) fn cells_slice(
         args.push((k.clone(), v));
     }
     if !open {
-        return Err(invalid(ErrorCode::Slice, "$.args".into(), "a slice has an open or ranged argument: read the cell"));
+        return Err(invalid(
+            ErrorCode::Slice,
+            "$.args".into(),
+            "a slice has an open or ranged argument: read the cell",
+        ));
     }
     let (ns, f) = fn_name.rsplit_once('/').unwrap_or(("", fn_name));
     Slice::from_value(&Value::Object(vec![
@@ -192,10 +208,9 @@ pub(crate) fn extent_cells(
                         .collect::<Result<Vec<_>, _>>()?,
                     (Some(datumesh_core::Extent::Range { lo, hi }), _) => {
                         let (lo, hi) = match p {
-                            Pattern::Range { lo: plo, hi: phi } => (
-                                max_lex(ty, lo, plo.lexical()).to_string(),
-                                min_lex(ty, hi, phi.lexical()).to_string(),
-                            ),
+                            Pattern::Range { lo: plo, hi: phi } => {
+                                (max_lex(ty, lo, plo.lexical()).to_string(), min_lex(ty, hi, phi.lexical()).to_string())
+                            }
                             _ => (lo.clone(), hi.clone()),
                         };
                         enumerate(ty, &lo, &hi, &path)?
@@ -233,10 +248,7 @@ pub(crate) fn extent_cells(
         out = next;
     }
     let (ns, f) = fn_name.rsplit_once('/').unwrap_or(("", fn_name));
-    Ok(out
-        .into_iter()
-        .map(|args| Cell { ns: ns.into(), fn_name: f.into(), fn_hash: fn_hash.into(), args })
-        .collect())
+    Ok(out.into_iter().map(|args| Cell { ns: ns.into(), fn_name: f.into(), fn_hash: fn_hash.into(), args }).collect())
 }
 
 fn max_lex<'a>(ty: Type, a: &'a str, b: &'a str) -> &'a str {
@@ -257,7 +269,8 @@ fn min_lex<'a>(ty: Type, a: &'a str, b: &'a str) -> &'a str {
 
 /// Every day (a `date`) or integer (a `number`) in `[lo, hi]`, ends rounded inward.
 fn enumerate(ty: Type, lo: &str, hi: &str, path: &str) -> Result<Vec<Scalar>, Error> {
-    let unbounded = || invalid(ErrorCode::Slice, path.to_string(), "a range that cannot be enumerated (E_FORMULA_UNBOUNDED)");
+    let unbounded =
+        || invalid(ErrorCode::Slice, path.to_string(), "a range that cannot be enumerated (E_FORMULA_UNBOUNDED)");
     let too_many = || invalid(ErrorCode::CanonLimit, path.to_string(), "a slice of more than 1,048,576 cells");
     let (a, b) = match ty {
         Type::Number => (ceil(lo).ok_or_else(unbounded)?, floor(hi).ok_or_else(unbounded)?),

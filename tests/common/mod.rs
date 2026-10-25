@@ -17,8 +17,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use datumesh_core::json::{self, Value};
 use datumesh_core::{
-    verify, Arg, Args, Cell, CellRef, FunctionDescriptor, Keys, Level, Receipt, ReceiptBuilder, Resolver, Scalar, SigningKey,
-    Type,
+    verify, Arg, Args, Cell, CellRef, FunctionDescriptor, Keys, Level, Receipt, ReceiptBuilder, Resolver, Scalar,
+    SigningKey, Type,
 };
 use datumesh_engine::native_test::NativeTest;
 use datumesh_engine::{Answer, Budget, Clock, Engine, EngineBuilder, EvalError, Inputs, Runtime};

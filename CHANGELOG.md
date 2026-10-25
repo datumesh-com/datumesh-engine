@@ -2,7 +2,7 @@
 
 All notable changes to `datumesh-engine`.
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-10-25)
 
 On `datumesh-store` 0.3.1 and `datumesh-core` 0.3.4 (spec-0.4.0). Breaking
 (`API-CHANGES-0.3.0.md`): `Runtime::evaluate` takes a `FunctionDescriptor`; `Inputs` has

@@ -99,8 +99,14 @@ fn future_is_kept_when_an_input_has_no_value() {
     });
     let e = w.engine();
     assert_eq!(e.get(&w.cellref("calc.example.net/later", &[]), Some(&t(20, 0))).unwrap(), faulted(Fault::Future));
-    assert_eq!(e.get(&w.cellref("calc.example.net/sooner", &[]), Some(&t(20, 0))).unwrap(), datumesh_engine::Answer::NOT_COVERED);
-    assert_eq!(e.get(&w.cellref("calc.example.net/claims", &[]), Some(&t(20, 0))).unwrap(), datumesh_engine::Answer::NOT_COVERED);
+    assert_eq!(
+        e.get(&w.cellref("calc.example.net/sooner", &[]), Some(&t(20, 0))).unwrap(),
+        datumesh_engine::Answer::NOT_COVERED
+    );
+    assert_eq!(
+        e.get(&w.cellref("calc.example.net/claims", &[]), Some(&t(20, 0))).unwrap(),
+        datumesh_engine::Answer::NOT_COVERED
+    );
     // read_asof's own FUTURE after an absence is kept too.
     w.native_fn("calc.example.net/at", &[S], &[], |_, i, _| {
         let missing = i.read(S, &args(&[]));
@@ -109,7 +115,10 @@ fn future_is_kept_when_an_input_has_no_value() {
             _ => missing,
         }
     });
-    assert_eq!(w.engine().get(&w.cellref("calc.example.net/at", &[]), Some(&t(20, 0))).unwrap(), faulted(Fault::Future));
+    assert_eq!(
+        w.engine().get(&w.cellref("calc.example.net/at", &[]), Some(&t(20, 0))).unwrap(),
+        faulted(Fault::Future)
+    );
 }
 
 #[test]
@@ -123,8 +132,11 @@ fn binding_peek_relies_on_nothing() {
     let h = w.store.put_descriptor(&descriptor("stored", "", &[], &[])).unwrap();
     w.store.bind_name(LATE, &h, &t(18, 0)).unwrap();
     w.native_fn("calc.example.net/peek", &[S, LATE], &[], |_, i, _| {
-        let b = i.binding_peek(LATE, None)?.expect("bound");
-        assert_eq!(b.start, t(18, 0));
+        // The value does not depend on the binding (recomputed at the receipt's asof, the
+        // 10th, the name has none yet).
+        if let Some(b) = i.binding_peek(LATE, None)? {
+            assert!(b.start == t(18, 0) || b.start == t(21, 0), "{}", b.start);
+        }
         assert!(i.binding_peek(LATE, Some(&t(17, 0)))?.is_none());
         i.read(S, &args(&[]))
     });

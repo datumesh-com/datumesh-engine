@@ -534,3 +534,29 @@ fn malformed_slice_reads_are_the_runtimes_mistake() {
     }
     assert_eq!(w.db().count("computed_versions"), 0);
 }
+
+#[test]
+fn a_stored_slice_is_read_without_receipt_bytes() {
+    // Store 0.3.2: the members' values, hashes, tx and asof come from slice_values (no
+    // receipt bytes), whether the answer holds later from slice_changed_after (no second
+    // scan). The only receipt bytes read for a cold slice reader are its own computed
+    // version's lookup.
+    let w = world();
+    for k in 0..50 {
+        w.publish(&temp(&w, "north", &format!("s{k:02}")), &k.to_string(), &t(10, 0));
+    }
+    let wire = common::wire::Wire::start(&w.db().config);
+    let store: std::sync::Arc<dyn datumesh_store::Store + Send + Sync> = std::sync::Arc::new(wire.store());
+    let e = datumesh_engine::Engine::builder(store, MESH)
+        .signing_key(key_for(MESH))
+        .clock(std::sync::Arc::new(w.clock.clone()))
+        .runtime(std::sync::Arc::new(SharedNative(w.native.clone())))
+        .build()
+        .unwrap();
+    wire.take();
+    let r = receipt_of(&e.get(&north(&w, TOTAL), Some(&t(20, 0))).unwrap());
+    assert_eq!(r.value(), &num(&(0..50).sum::<i32>().to_string()));
+    let sql = wire.take();
+    assert_eq!(common::wire::matching(&sql, "r.bytes"), 1, "only the computed version's lookup: {sql:#?}");
+    assert_eq!(common::wire::matching(&sql, "m.bytes"), 0, "{sql:#?}");
+}

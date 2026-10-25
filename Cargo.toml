@@ -1,6 +1,6 @@
 [package]
 name = "datumesh-engine"
-version = "0.3.0"
+version = "0.3.1"
 description = "The Datumesh engine: the value of a cell as of a time, from stored receipts or by evaluating functions; memoised, and signed for computed cells."
 edition = "2021"
 rust-version = "1.97"
@@ -20,7 +20,7 @@ native-test = []
 
 [dependencies]
 datumesh-core = { version = "0.3.4", features = ["sign"] }
-datumesh-store = "0.3.1"
+datumesh-store = "0.3.2"
 tracing = "0.1.44"
 
 [dev-dependencies]

@@ -330,7 +330,6 @@ impl Budget {
         Ok(())
     }
 
-    #[allow(dead_code)] // used by the evaluation (next commits)
     /// Starts an attempt of a frame whose earlier attempts charged at most `floor` (0 for a
     /// first attempt); the frame's floor is no longer pending.
     pub(crate) fn begin_attempt(&self, floor: u64) {
@@ -340,7 +339,6 @@ impl Budget {
         m.floor = floor;
     }
 
-    #[allow(dead_code)]
     /// The running attempt suspended: returns the frame's new floor, now pending.
     pub(crate) fn suspend_attempt(&self) -> u64 {
         let mut m = self.lock();
@@ -351,7 +349,6 @@ impl Budget {
         floor
     }
 
-    #[allow(dead_code)]
     /// The running attempt completed: its fuel is the evaluation's.
     pub(crate) fn finish_attempt(&self) -> u64 {
         let mut m = self.lock();

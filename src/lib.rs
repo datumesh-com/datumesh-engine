@@ -169,6 +169,7 @@ mod memo;
 pub mod native_test;
 mod runtime;
 mod sign;
+mod slice;
 
 pub use clock::{Clock, SystemClock};
 pub use engine::{

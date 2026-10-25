@@ -22,8 +22,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use datumesh_core::{Receipt, Slice};
+
 use crate::engine::MemoStats;
-use crate::eval::Ans;
+use crate::eval::{Ans, Use};
 
 pub(crate) struct Memo {
     capacity: usize,
@@ -46,6 +48,14 @@ struct State {
     dirty: HashMap<String, u64>,
     /// Revisions at which running evaluations began, with how many began at each.
     active: BTreeMap<u64, usize>,
+    /// The slices over stored functions that held answers read, by function hash and slice
+    /// id, with the cells whose answers read them: a new stored version of a cell the slice
+    /// contains drops them.
+    patterns: HashMap<String, HashMap<String, (Arc<Slice>, HashSet<String>)>>,
+    pattern_count: usize,
+    /// Stored versions added while evaluations ran, with the revision: their receipt (none
+    /// when it could not be read), to refuse answers of slices they fall into.
+    added: Vec<(u64, Option<Arc<Receipt>>)>,
 }
 
 impl Memo {
@@ -101,7 +111,20 @@ impl Memo {
         let mut s = self.lock();
         if self.enabled() {
             for a in answers {
-                let mark = std::iter::once(&a.id).chain(a.deps()).filter_map(|c| s.dirty.get(c)).max().copied();
+                if !a.memo {
+                    continue;
+                }
+                let mut mark = std::iter::once(&a.id).chain(a.deps()).filter_map(|c| s.dirty.get(c)).max().copied();
+                // A version added since, of a cell one of its slices contains.
+                for (rev, r) in s.added.iter().filter(|(rev, _)| *rev > start) {
+                    let hit = a.patterns().any(|p| match r {
+                        Some(r) => p.fn_hash() == r.cell().fn_hash && p.contains(r),
+                        None => true,
+                    });
+                    if hit {
+                        mark = Some(mark.map_or(*rev, |m| m.max(*rev)));
+                    }
+                }
                 if let Some(m) = mark.filter(|m| *m > start) {
                     let d = s.dirty.entry(a.id.clone()).or_default();
                     *d = (*d).max(m);
@@ -118,14 +141,51 @@ impl Memo {
         self.lock().finish(start);
     }
 
-    /// A stored version of `cell_id` was added: drops its answers and those of every cell
-    /// that read it, transitively.
-    pub(crate) fn invalidate(&self, cell_id: &str) {
+    /// Whether [`invalidate`](Memo::invalidate) needs the receipt of the version added: some
+    /// answer read a slice over a stored function, or an evaluation is running.
+    pub(crate) fn wants_receipts(&self) -> bool {
+        let s = self.lock();
+        s.pattern_count > 0 || !s.active.is_empty()
+    }
+
+    /// A stored version of `cell_id` was added (its receipt `receipt`, when known): drops its
+    /// answers and those of every cell that read it, or read a slice containing it,
+    /// transitively. Without the receipt, every answer that read a slice over a stored
+    /// function is dropped.
+    pub(crate) fn invalidate(&self, cell_id: &str, receipt: Option<Arc<Receipt>>) {
         let mut s = self.lock();
         s.rev += 1;
         let rev = s.rev;
         let track = !s.active.is_empty();
         let mut queue = vec![cell_id.to_string()];
+        // The readers of slices the new version falls into.
+        let mut matched = Vec::new();
+        match &receipt {
+            Some(r) => {
+                if let Some(by_id) = s.patterns.get_mut(&r.cell().fn_hash) {
+                    by_id.retain(|_, (slice, readers)| {
+                        if slice.contains(r) {
+                            matched.extend(readers.drain());
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                }
+            }
+            None => {
+                for (_, by_id) in s.patterns.drain() {
+                    for (_, (_, readers)) in by_id {
+                        matched.extend(readers);
+                    }
+                }
+            }
+        }
+        s.pattern_count = s.patterns.values().map(HashMap::len).sum();
+        queue.extend(matched);
+        if track {
+            s.added.push((rev, receipt));
+        }
         let mut seen = HashSet::new();
         while let Some(c) = queue.pop() {
             if !seen.insert(c.clone()) {
@@ -153,6 +213,8 @@ impl Memo {
         s.entries.clear();
         s.readers.clear();
         s.stale.clear();
+        s.patterns.clear();
+        s.pattern_count = 0;
         s.count = 0;
         s.stale_count = 0;
         s.edges = 0;
@@ -174,9 +236,16 @@ impl Memo {
                     + a.hi.as_ref().map_or(0, String::len)
                     + a.inputs
                         .iter()
-                        .map(|u| u.id.len() + u.hash.len() + std::mem::size_of_val(u) + 160)
+                        .map(|u| match u {
+                            Use::Cell { id, hash, .. } => id.len() + hash.len() + std::mem::size_of_val(u) + 160,
+                            // Shared by the answers that read it: counted where it is held.
+                            Use::Slice(r) => {
+                                (r.entry.len() + r.manifest.len() + r.members.len() * 400 + 200)
+                                    / Arc::strong_count(r).max(1)
+                            }
+                        })
                         .sum::<usize>()
-                    + a.names.iter().map(|(k, v)| k.len() + v.len() + 64).sum::<usize>()
+                    + a.names.iter().map(|((k, t), v)| k.len() + t.as_ref().map_or(0, String::len) + v.len() + 64).sum::<usize>()
                         / Arc::strong_count(&a.names).max(1);
             }
         }
@@ -185,7 +254,9 @@ impl Memo {
         }
         bytes += s.dirty.keys().map(|k| k.len() + 40).sum::<usize>();
         bytes += s.stale.values().flatten().map(|a| a.bytes.len() + 400).sum::<usize>();
+        bytes += s.patterns.values().flat_map(HashMap::values).map(|(p, r)| p.canonical().len() + r.len() * 80 + 120).sum::<usize>();
         MemoStats {
+            slice_patterns: s.pattern_count,
             stale: s.stale_count,
             entries: s.count,
             cells: s.entries.len(),
@@ -210,6 +281,8 @@ impl State {
             self.entries.clear();
             self.readers.clear();
             self.stale.clear();
+            self.patterns.clear();
+            self.pattern_count = 0;
             self.count = 0;
             self.stale_count = 0;
             self.edges = 0;
@@ -218,6 +291,13 @@ impl State {
             if self.readers.entry(d.clone()).or_default().insert(a.id.clone()) {
                 self.edges += 1;
             }
+        }
+        for p in a.patterns() {
+            let by_id = self.patterns.entry(p.fn_hash().to_string()).or_default();
+            if !by_id.contains_key(p.id()) {
+                self.pattern_count += 1;
+            }
+            by_id.entry(p.id().to_string()).or_insert_with(|| (p.clone(), HashSet::new())).1.insert(a.id.clone());
         }
         self.entries.entry(a.id.clone()).or_default().push(a);
         self.count += 1;
@@ -232,8 +312,14 @@ impl State {
         }
         // Marks matter only to evaluations that began before them.
         match self.active.keys().next().copied() {
-            None => self.dirty.clear(),
-            Some(oldest) => self.dirty.retain(|_, m| *m > oldest),
+            None => {
+                self.dirty.clear();
+                self.added.clear();
+            }
+            Some(oldest) => {
+                self.dirty.retain(|_, m| *m > oldest);
+                self.added.retain(|(m, _)| *m > oldest);
+            }
         }
     }
 }

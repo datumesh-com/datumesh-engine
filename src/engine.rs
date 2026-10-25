@@ -6,7 +6,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use datumesh_core::{lexical, Cell, CellRef, Fault, FunctionDescriptor, KeyDoc, Resolver, Scalar, SigningKey};
+use datumesh_core::{lexical, Cell, CellRef, Evaluation, Fault, FunctionDescriptor, KeyDoc, Resolver, Scalar, SigningKey};
 use datumesh_store::Store;
 
 use crate::cache::{Cache, Parsed};
@@ -269,6 +269,9 @@ pub struct MemoStats {
     /// Answers dropped because a stored version they rested on changed, kept to be rechecked
     /// from memory (early cutoff without store queries for the unchanged part of a graph).
     pub stale: usize,
+    /// Slices over stored functions read by answers held (matched by pattern against new
+    /// stored versions). Since 0.3.0.
+    pub slice_patterns: usize,
     /// An estimate of the bytes these take.
     pub approx_bytes: usize,
 }
@@ -333,13 +336,13 @@ impl Engine {
             other => EngineError::Runtime { cell_id: id.clone(), message: other.to_string() },
         };
         // From the memo, without waiting for the evaluator.
-        if let Some(ans) = Req::new(self, a, now).memo_hit(&id).map_err(store_err)? {
+        if let Some(ans) = Req::new(self, a, now).memo_hit(&id, a).map_err(store_err)? {
             return Ok(Answer::Receipt(ans.bytes.to_vec()));
         }
         let done = if desc.lang == STORED {
             let start = self.memo.begin();
             let mut req = Req::new(self, a, now);
-            match req.stored(cell, &id) {
+            match req.stored(cell, &id, a) {
                 Ok(d) => {
                     self.memo.end(start, &req.learned);
                     d
@@ -355,7 +358,8 @@ impl Engine {
         };
         Ok(match done {
             Done::Value(ans) => Answer::Receipt(ans.bytes.to_vec()),
-            Done::NotCovered | Done::Unsigned(_) => Answer::NOT_COVERED,
+            Done::Fault(fault, _) => Answer::NotCovered { fault: Some(fault) },
+            Done::NotCovered | Done::Unsigned(..) => Answer::NOT_COVERED,
         })
     }
 
@@ -374,7 +378,7 @@ impl Engine {
         let mut req = Req::new(self, a, now);
         let result = (|| {
             if !unsigned {
-                if let Some(ans) = req.memo_hit(&cell.id()).map_err(|e| crate::eval::engine_error(e, &cell.id()))? {
+                if let Some(ans) = req.memo_hit(&cell.id(), &req.asof()).map_err(|e| crate::eval::engine_error(e, &cell.id()))? {
                     return Ok(Done::Value(ans));
                 }
             }
@@ -401,7 +405,7 @@ impl Engine {
 
     /// The value of `cell` as of `asof`, evaluated (a computed cell's function is run, not
     /// looked up); for `Resolver::evaluate`.
-    fn evaluate_value(&self, cell: &Cell, asof: &str) -> Result<Option<Scalar>, EngineError> {
+    fn evaluate_value(&self, cell: &Cell, asof: &str) -> Result<Option<Evaluation>, EngineError> {
         if !is_instant(asof) || cell.is_slice() {
             return Ok(None);
         }
@@ -412,16 +416,16 @@ impl Engine {
         let now = self.clock.now();
         let done = if desc.lang == STORED {
             Req::new(self, asof, &now)
-                .stored(cell, &cell.id())
+                .stored(cell, &cell.id(), asof)
                 .map_err(|e| EngineError::Runtime { cell_id: cell.id(), message: e.to_string() })?
         } else {
             let _single = self.evaluator.lock().unwrap_or_else(|p| p.into_inner());
             self.evaluate_cell(cell, desc, asof, &now, true)?
         };
         Ok(match done {
-            Done::Value(ans) => Some(ans.value.clone()),
-            Done::Unsigned(v) => Some(v),
-            Done::NotCovered => None,
+            Done::Value(ans) => Some(Evaluation::new(ans.value.clone())),
+            Done::Unsigned(v, lineage) => Some(Evaluation::with_lineage(v, lineage)),
+            Done::NotCovered | Done::Fault(..) => None,
         })
     }
 
@@ -438,8 +442,25 @@ impl Engine {
 
     /// Tells the engine that a stored version of `cell_id` was added: the memoised answers
     /// that depend on the cell are dropped.
+    ///
+    /// Since 0.3.0 also the answers that read a slice the cell falls into (a late sample, a
+    /// correction, a new member), and nothing else: when some memoised answer read a slice
+    /// over a stored function (or an evaluation is running), the engine reads the cell's
+    /// latest receipt from the store to match it against their patterns. If that read fails,
+    /// every answer that read such a slice is dropped.
     pub fn stored_version_added(&self, cell_id: &str) {
-        self.memo.invalidate(cell_id);
+        let receipt = if self.memo.wants_receipts() {
+            self.store
+                .latest(cell_id)
+                .ok()
+                .flatten()
+                .and_then(|v| self.store.receipt(&v.receipt_hash).map(|b| b.into_owned()))
+                .and_then(|b| datumesh_core::Receipt::from_json(&b).ok())
+                .map(Arc::new)
+        } else {
+            None
+        };
+        self.memo.invalidate(cell_id, receipt);
     }
 
     /// Drops every memoised answer.
@@ -462,12 +483,26 @@ impl Resolver for Engine {
         self.store.receipt(hash)
     }
 
+    /// The manifest of a slice entry, from the store (the engine stores the manifest of every
+    /// slice its receipts and evaluations read).
+    fn manifest(&self, entry: &str) -> Option<Cow<'_, [u8]>> {
+        self.store.manifest(entry)
+    }
+
     /// The value of `cell` as of `asof` by the engine's answering rule (a receipt answers at
     /// A when its tx and its asof are both at or before A): a stored cell's is looked up; a
     /// computed cell's function is evaluated (its inputs answered as for `get`, and stored
     /// when new), never read back from its own receipts. `None` when there is none or the
     /// evaluation fails (logged with `tracing`, target `datumesh_engine`).
     fn evaluate(&self, cell: &Cell, asof: &str) -> Option<Scalar> {
+        self.evaluation(cell, asof).map(|e| e.value)
+    }
+
+    /// [`evaluate`](Resolver::evaluate)'s value with, for a computed cell, its lineage: the
+    /// `inputs` entries the evaluation read (receipt hashes and slice entries, whose receipts
+    /// and manifests the engine serves), so that a verifier can report `E_INPUT_SUPERSEDED`
+    /// (SPEC 10.1 step 7.6). A stored cell's has none.
+    fn evaluation(&self, cell: &Cell, asof: &str) -> Option<Evaluation> {
         match self.evaluate_value(cell, asof) {
             Ok(v) => v,
             Err(e) => {

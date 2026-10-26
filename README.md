@@ -155,7 +155,7 @@ With a PostgreSQL 16 server whose role may create databases in `DATABASE_URL`, `
 | signing one receipt | 290 µs | 547 µs |
 | storing one receipt (`put_receipt` verifies it) | 2.6 ms | 4.0 ms |
 
-A 10,000-cell graph (100 layers of 100, each cell reading two below): built cold in 58 s; one correction of a stored input under it, until the next `get` of the top is correct: 29 s when the change propagates, about 200 ms when early cutoff stops it at the first layer (0.3.1; 0.3.0 was 62% slower than 0.2.0 there, 0.3.1 is about 11% slower: see the 0.3.1 results).
+A 10,000-cell graph (100 layers of 100, each cell reading two below): built cold in 58 s; one correction of a stored input under it, until the next `get` of the top is correct: 29 s when the change propagates, about 200 ms when early cutoff stops it at the first layer (0.3.1; on a quiet host 0.3.0 was 68% slower than 0.2.0 there, 0.3.1 is 16% slower: see the 0.3.1 results).
 
 Slice reads (one request each; the sum over a stored slice):
 

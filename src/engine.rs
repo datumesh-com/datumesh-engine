@@ -319,6 +319,30 @@ impl Engine {
         self.answer(&resolved, &a, &now)
     }
 
+    /// The cell `cell` denotes, its function name resolved as of `asof` (else `cell.asof`,
+    /// else now), as [`get`](Engine::get) resolves it; `None` when the name has no binding
+    /// then (SPEC 5.5 `E_NAME_UNBOUND`: it may be bound later), where `get` answers
+    /// [`Answer::NotCovered`]. With the cell, [`get_cell`](Engine::get_cell) answers as `get`
+    /// would. Malformed requests are the errors `get` gives. Since 0.3.2.
+    pub fn resolve(&self, cell: &CellRef, asof: Option<&str>) -> Result<Option<Cell>, EngineError> {
+        let now;
+        let a = match asof.or(cell.asof.as_deref()) {
+            Some(a) => a,
+            None => {
+                now = self.clock.now();
+                &now
+            }
+        };
+        lexical::check_instant(a, "$.asof").map_err(EngineError::Invalid)?;
+        check_no_slice(&cell.args)?;
+        let fn_name = format!("{}/{}", cell.ns, cell.fn_name);
+        let Some(fn_hash) = self.store.resolve_name(&fn_name, a).map_err(|e| StoreError::new("resolve_name", e))?
+        else {
+            return Ok(None);
+        };
+        cell.resolve(&fn_hash).map(Some).map_err(EngineError::Invalid)
+    }
+
     /// The value of `cell` (its function pinned by `fn_hash`), as of `asof` (else now). The
     /// form for a reference that already carries the function hash. An unknown function
     /// hash is [`Answer::NotCovered`].

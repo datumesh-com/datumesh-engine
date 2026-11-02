@@ -204,6 +204,28 @@ pub trait Inputs {
         self.binding(fn_name, at)
     }
 
+    /// The content of the blob whose SHA-256 is `sha256` (64 lowercase hex digits) and whose
+    /// length is `length` bytes, as a blob value states them (`<sha256>:<length>:<media
+    /// type>`, SPEC 3.7). Since 0.3.2, for `text_of` (SPEC 15.7).
+    ///
+    /// The engine reads it from the store (`Store::blob`) and checks its length and SHA-256
+    /// against `length` and `sha256`. Content it cannot obtain, or that does not match, is
+    /// [`EvalError::BlobUnavailable`]: the evaluator's failure, not a fault of the cell; the
+    /// request fails with it whatever the runtime does next. The content adds no `inputs`
+    /// entry (the blob is an input already, as an argument or an input's value, and its
+    /// hash fixes the content), and it is free: the runtime charges what its language says
+    /// (SPEC 15.12: `text_of` 1 + bytes / 64, once the content is obtained), knowing the
+    /// length. The runtime checks the media type, before asking.
+    ///
+    /// Provided: [`EvalError::BlobUnavailable`] (an `Inputs` with no content to offer).
+    fn read_blob(&mut self, sha256: &str, length: u64) -> Result<Vec<u8>, EvalError> {
+        let _ = length;
+        Err(EvalError::BlobUnavailable {
+            sha256: sha256.to_string(),
+            reason: "these inputs offer no blob content".into(),
+        })
+    }
+
     /// How the instant `t` compares with the evaluation's asof (`t.cmp(asof)`), without
     /// making the evaluation asof-dependent when the answer cannot change at a later asof.
     /// Free. Since 0.3.1.

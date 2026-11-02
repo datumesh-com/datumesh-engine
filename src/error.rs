@@ -128,6 +128,17 @@ pub enum EvalError {
     /// member without a value, a transaction time after the asof), the runtime may catch it
     /// where its language allows. Since 0.3.0.
     Fault(datumesh_core::Fault),
+    /// A blob's content could not be obtained ([`Inputs::read_blob`](crate::Inputs::read_blob)):
+    /// the store has none for its SHA-256, or what it has is not the blob's (another length or
+    /// hash). The evaluator's failure, not a fault of the cell (SPEC 15.12,
+    /// `E_FORMULA_BLOB_UNAVAILABLE`): the request fails with
+    /// [`EngineError::BlobUnavailable`] whatever the runtime returns after it. Since 0.3.2.
+    BlobUnavailable {
+        /// The blob's SHA-256.
+        sha256: String,
+        /// Why: no content, or content of another length or hash.
+        reason: String,
+    },
 }
 
 impl fmt::Display for EvalError {
@@ -145,6 +156,9 @@ impl fmt::Display for EvalError {
             EvalError::InputNotCovered { cell_id } => write!(f, "input cell {cell_id} has no value as of the asof"),
             EvalError::InvalidInput(e) => write!(f, "invalid input cell: {e}"),
             EvalError::Fault(c) => write!(f, "evaluation fault {c}"),
+            EvalError::BlobUnavailable { sha256, reason } => {
+                write!(f, "the content of blob {sha256} is unavailable: {reason}")
+            }
         }
     }
 }
@@ -217,6 +231,15 @@ pub enum EngineError {
         /// What happened.
         message: String,
     },
+    /// A function read a blob whose content the engine could not obtain or check (SPEC 15.7,
+    /// 15.12: `E_FORMULA_BLOB_UNAVAILABLE`, the evaluator's failure). Nothing was stored for
+    /// the request. Since 0.3.2.
+    BlobUnavailable {
+        /// The blob's SHA-256.
+        sha256: String,
+        /// Why: no content, or content of another length or hash.
+        reason: String,
+    },
     /// The request is malformed: an asof that is not an instant, a slice, arguments that do
     /// not match the function's signature; or a runtime read such an input. The core's error
     /// carries the code (`E_CANON_INSTANT`, `E_SLICE`, `E_ARG_UNKNOWN`, ...). Added to the
@@ -246,6 +269,9 @@ impl fmt::Display for EngineError {
             EngineError::NameUnresolved { fn_name, asof } => write!(f, "{fn_name} has no binding as of {asof}"),
             EngineError::Store(e) => e.fmt(f),
             EngineError::Runtime { cell_id, message } => write!(f, "runtime, evaluating cell {cell_id}: {message}"),
+            EngineError::BlobUnavailable { sha256, reason } => {
+                write!(f, "the content of blob {sha256} is unavailable: {reason}; nothing was stored")
+            }
             EngineError::Invalid(e) => write!(f, "invalid request: {e}"),
             EngineError::Sign(e) => write!(f, "cannot sign the computed receipt: {e}"),
         }

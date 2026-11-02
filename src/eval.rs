@@ -1601,6 +1601,27 @@ impl Inputs for Reader<'_, '_> {
         self.guard(r)
     }
 
+    fn read_blob(&mut self, sha256: &str, length: u64) -> Result<Vec<u8>, EvalError> {
+        if let Some(e) = self.stopped() {
+            return Err(e);
+        }
+        let r = (|| {
+            lexical::check_hex(sha256, 64, "$.sha256").map_err(EvalError::InvalidInput)?;
+            let unavailable = |reason: String| EvalError::BlobUnavailable { sha256: sha256.to_string(), reason };
+            let Some(bytes) = self.req.eng.store.blob(sha256).map_err(store_err("blob"))? else {
+                return Err(unavailable("the store has no content for it".into()));
+            };
+            if bytes.len() as u64 != length {
+                return Err(unavailable(format!("the content has {} bytes, the blob {length}", bytes.len())));
+            }
+            if datumesh_core::sha256_hex(&bytes) != sha256 {
+                return Err(unavailable("the content has another SHA-256".into()));
+            }
+            Ok(bytes.into_owned())
+        })();
+        self.guard(r)
+    }
+
     fn asof_compare(&mut self, t: &str) -> Result<std::cmp::Ordering, EvalError> {
         instant_arg(t, "$.t")?;
         let ord = t.cmp(self.asof.as_str());
@@ -1634,6 +1655,7 @@ pub(crate) fn engine_error(e: EvalError, cell_id: &str) -> EngineError {
         EvalError::NameUnresolved { fn_name, asof } => EngineError::NameUnresolved { fn_name, asof },
         EvalError::Store(e) => EngineError::Store(e),
         EvalError::InvalidInput(e) => EngineError::Invalid(e),
+        EvalError::BlobUnavailable { sha256, reason } => EngineError::BlobUnavailable { sha256, reason },
         other => EngineError::Runtime { cell_id: cell_id.to_string(), message: other.to_string() },
     }
 }

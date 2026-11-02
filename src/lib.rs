@@ -72,6 +72,14 @@
 //! (its name resolved as of `T`; a computed cell evaluated as of `T`), `E_FORMULA_FUTURE` when
 //! `T` (or `to`) is after A.
 //!
+//! # Blob content (spec-0.4.2)
+//!
+//! [`Inputs::read_blob`] gives a blob's content (for `text_of`, SPEC 15.7) from the store,
+//! checked against the blob's length and SHA-256. Content the engine cannot obtain or check
+//! is [`EngineError::BlobUnavailable`], the evaluator's failure (`E_EVAL_UNAVAILABLE`), never
+//! `not_covered`. The content is no `inputs` entry; the runtime charges its fuel. Recomputing
+//! through [`Engine`] as a resolver obtains it again from the store.
+//!
 //! # Faults
 //!
 //! A runtime's [`EvalError::Fault`] (`E_FORMULA_DIV_ZERO`, `E_FORMULA_DOMAIN`,
@@ -195,11 +203,16 @@
 //! | `Err(Invalid(e))` | a malformed request (asof, slice, arguments against the signature) | `bad_request`, `error` = `e.code()` |
 //! | `Err(NameUnresolved { .. })` | an input's name has no binding as of A | `error`, `E_FN_UNAVAILABLE` |
 //! | `Err(UndeclaredInput { .. })` | a function read a name it does not declare | `error`, `E_INPUT_UNDECLARED` |
-//! | `Err(NoRuntime { .. })`, `Runtime`, `Cycle`, `DepthExceeded`, `BudgetExceeded`, `WorkExceeded` | the mesh could not evaluate the function | `error`, `E_EVAL_UNAVAILABLE` (or `stale` with an earlier receipt; never for an asof-dependent cell's receipt of another asof) |
+//! | `Err(NoRuntime { .. })`, `Runtime`, `Cycle`, `DepthExceeded`, `BudgetExceeded`, `WorkExceeded`, `BlobUnavailable` | the mesh could not evaluate the function | `error`, `E_EVAL_UNAVAILABLE` (or `stale` with an earlier receipt; never for an asof-dependent cell's receipt of another asof) |
 //! | `Err(Sign(e))` | an input's `asof` is later than the clock (`E_TIME_ORDER`) | `error`, `E_TIME_ORDER` |
 //! | `Err(Store(e))` | the store failed | `error`, `E_INPUT_UNAVAILABLE` (or `stale`) |
 //!
-//! `trust` for an engine-computed receipt is `verified`. A receipt of an asof-dependent
+//! Since spec-0.4.2: a request pinned to a function hash (`fn_hash=`) is
+//! [`Engine::get_cell`] with that hash (an unknown hash is plain `not_covered`); an unbound
+//! name (`not_covered` with `E_NAME_UNBOUND`) is told apart with [`Engine::resolve`], which
+//! gives the cell `get` would answer, or `None`; `trust` for a receipt this mesh computed and
+//! signed is `computed` (the HTTP layer's to say: the receipt's `computed_by` is the mesh).
+//! Before spec-0.4.2, `trust` for an engine-computed receipt was `verified`. A receipt of an asof-dependent
 //! function answers only the asof it was made for, which is what `get` returns.
 //!
 //! [`Engine`] is also a time-aware [`datumesh_core::Resolver`], with the answering rule above:

@@ -30,6 +30,9 @@ pub fn datumesh_engine::ConfigError::fmt(&self, &mut core::fmt::Formatter<'_>) -
 impl core::fmt::Display for datumesh_engine::ConfigError
 pub fn datumesh_engine::ConfigError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 #[non_exhaustive] pub enum datumesh_engine::EngineError
+pub datumesh_engine::EngineError::BlobUnavailable
+pub datumesh_engine::EngineError::BlobUnavailable::reason: alloc::string::String
+pub datumesh_engine::EngineError::BlobUnavailable::sha256: alloc::string::String
 pub datumesh_engine::EngineError::BudgetExceeded
 pub datumesh_engine::EngineError::BudgetExceeded::fuel: u64
 pub datumesh_engine::EngineError::Cycle
@@ -63,6 +66,9 @@ pub fn datumesh_engine::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -
 impl core::fmt::Display for datumesh_engine::EngineError
 pub fn datumesh_engine::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 #[non_exhaustive] pub enum datumesh_engine::EvalError
+pub datumesh_engine::EvalError::BlobUnavailable
+pub datumesh_engine::EvalError::BlobUnavailable::reason: alloc::string::String
+pub datumesh_engine::EvalError::BlobUnavailable::sha256: alloc::string::String
 pub datumesh_engine::EvalError::BudgetExceeded
 pub datumesh_engine::EvalError::BudgetExceeded::fuel: u64
 pub datumesh_engine::EvalError::Cycle
@@ -122,6 +128,7 @@ pub fn datumesh_engine::Engine::clear_memo(&self)
 pub fn datumesh_engine::Engine::get(&self, &datumesh_core::model::CellRef, core::option::Option<&str>) -> core::result::Result<datumesh_engine::Answer, datumesh_engine::EngineError>
 pub fn datumesh_engine::Engine::get_cell(&self, &datumesh_core::model::Cell, core::option::Option<&str>) -> core::result::Result<datumesh_engine::Answer, datumesh_engine::EngineError>
 pub fn datumesh_engine::Engine::memo_stats(&self) -> datumesh_engine::MemoStats
+pub fn datumesh_engine::Engine::resolve(&self, &datumesh_core::model::CellRef, core::option::Option<&str>) -> core::result::Result<core::option::Option<datumesh_core::model::Cell>, datumesh_engine::EngineError>
 pub fn datumesh_engine::Engine::stored_version_added(&self, &str)
 impl core::fmt::Debug for datumesh_engine::Engine
 pub fn datumesh_engine::Engine::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -243,6 +250,7 @@ pub fn datumesh_engine::Inputs::binding(&mut self, &str, core::option::Option<&s
 pub fn datumesh_engine::Inputs::binding_peek(&mut self, &str, core::option::Option<&str>) -> core::result::Result<core::option::Option<datumesh_engine::FnBinding>, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read(&mut self, &str, &datumesh_core::model::Args) -> core::result::Result<datumesh_core::model::Scalar, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read_asof(&mut self, &str, &datumesh_core::model::Args, &str) -> core::result::Result<datumesh_engine::Input, datumesh_engine::EvalError>
+pub fn datumesh_engine::Inputs::read_blob(&mut self, &str, u64) -> core::result::Result<alloc::vec::Vec<u8>, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read_cell(&mut self, &str, &datumesh_core::model::Args) -> core::result::Result<datumesh_engine::Input, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read_slice(&mut self, &str, &datumesh_engine::SlicePattern) -> core::result::Result<alloc::vec::Vec<datumesh_engine::Member>, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read_versions(&mut self, &str, &datumesh_core::model::Args, &str, &str) -> core::result::Result<alloc::vec::Vec<datumesh_engine::Input>, datumesh_engine::EvalError>

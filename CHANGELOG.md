@@ -2,6 +2,30 @@
 
 All notable changes to `datumesh-engine`.
 
+## 0.3.2 (unreleased)
+
+For spec-0.4.2 (`text_of`, `E_NAME_UNBOUND`). On `datumesh-core` 0.3.5. Additive
+(`API-CHANGES-0.3.2.md`).
+
+### Added
+
+- `Inputs::read_blob(sha256, length)` (provided: `EvalError::BlobUnavailable`): a blob's
+  content. The engine reads it from the store and checks its length and SHA-256; content it
+  cannot obtain or that does not match is `EvalError::BlobUnavailable`, which fails the
+  request (`EngineError::BlobUnavailable`, an `error` with `E_EVAL_UNAVAILABLE`, never
+  `not_covered`) whatever the runtime returns after it. No `inputs` entry; free (the runtime
+  charges SPEC 15.12's `1 + bytes / 64`, knowing the length).
+- `EvalError::BlobUnavailable`, `EngineError::BlobUnavailable`.
+- `Engine::resolve(cell_ref, asof)`: the cell `get` would answer, or `None` when the name has
+  no binding then (`E_NAME_UNBOUND`); `get` still answers `NotCovered` for it.
+
+### Notes
+
+- Recomputation through the engine as a resolver (`Resolver::evaluation`) runs the function
+  through the engine, so it obtains blob content from the store as the evaluation did.
+- Pinned requests (spec-0.4.2's `fn_hash=`) need nothing new: `get_cell` takes the pinned
+  cell.
+
 ## 0.3.1 (2026-10-26)
 
 The 1.3 follow-ups. Additive (`API-CHANGES-0.3.1.md`).

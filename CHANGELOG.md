@@ -2,7 +2,21 @@
 
 All notable changes to `datumesh-engine`.
 
-## 0.3.2 (unreleased)
+## 0.4.0 (unreleased)
+
+On `datumesh-store` 0.4.0 (was 0.3.2), so that an engine can run on its SQLite backend
+(`SqliteStore`) as well as on PostgreSQL. Nothing else changed: no code, no behaviour
+(`API-CHANGES-0.4.0.md`).
+
+### Changed
+
+- `datumesh-store = "0.4.0"`. Breaking only because the public API names the store's sealed
+  `Store` trait (`Engine::builder` takes an `Arc<dyn Store + Send + Sync>`) and its error
+  (`StoreError::store_error`), which are now store 0.4's: users move to `datumesh-store` 0.4
+  together with this release. Code written for 0.3.2 on store 0.3.2 builds unchanged on 0.4.0
+  and store 0.4.0 (store 0.4.0 is additive for `PgStore` users).
+
+## 0.3.2 (2026-11-02)
 
 For spec-0.4.2 (`text_of`, `E_NAME_UNBOUND`). On `datumesh-core` 0.3.5. Additive
 (`API-CHANGES-0.3.2.md`).

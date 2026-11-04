@@ -132,7 +132,12 @@ It prints `total = 120 as of 2026-03-02T09:00:00.000000Z, tx 2026-03-02T09:00:00
 
 The crate documentation describes the `Runtime` and `Inputs` contract for function languages and the `get` contract for an HTTP layer (answers, errors, envelope outcomes). The API is synchronous; `Engine` is `Send + Sync`. Dependencies: `datumesh-core` (feature `sign`), `datumesh-store`, and `tracing` (failures that `Resolver::evaluate` turns into `None`, and computed-version conflicts, at target `datumesh_engine`). No `unsafe`, no panics on any input, no global state, no network, no file but the configured key file.
 
-Feature `native-test`: `native_test::NativeTest`, a runtime of Rust closures keyed by function hash, for tests and the benchmark.
+Features (none on by default):
+
+| Feature | What |
+|---|---|
+| `sqlite` | `datumesh-store`'s `sqlite` (its SQLite backend, `SqliteStore`, SQLite compiled in from source). Since 0.4.0 the engine depends on the store with `default-features = false`, so a PostgreSQL-only build compiles no SQLite; `PgStore` is always there (the store has no feature for it), so users of 0.3 on PostgreSQL need no feature. A crate that depends on `datumesh-store` with its defaults gets `SqliteStore` either way. |
+| `native-test` | `native_test::NativeTest`, a runtime of Rust closures keyed by function hash, for tests and the benchmark. |
 
 ## Development
 

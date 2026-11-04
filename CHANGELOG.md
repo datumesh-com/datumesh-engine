@@ -5,8 +5,8 @@ All notable changes to `datumesh-engine`.
 ## 0.4.0 (unreleased)
 
 On `datumesh-store` 0.4.0 (was 0.3.2), so that an engine can run on its SQLite backend
-(`SqliteStore`) as well as on PostgreSQL. Nothing else changed: no code, no behaviour
-(`API-CHANGES-0.4.0.md`).
+(`SqliteStore`, feature `sqlite`) as well as on PostgreSQL. Nothing else changed: no code,
+no behaviour (`API-CHANGES-0.4.0.md`).
 
 ### Changed
 
@@ -15,6 +15,10 @@ On `datumesh-store` 0.4.0 (was 0.3.2), so that an engine can run on its SQLite b
   (`StoreError::store_error`), which are now store 0.4's: users move to `datumesh-store` 0.4
   together with this release. Code written for 0.3.2 on store 0.3.2 builds unchanged on 0.4.0
   and store 0.4.0 (store 0.4.0 is additive for `PgStore` users).
+- `datumesh-store` with `default-features = false`: the store's SQLite backend is not built
+  unless asked for, through the engine's new feature `sqlite` (off by default; it enables
+  `datumesh-store/sqlite`). `PgStore` is always built (the store has no feature for it), so
+  PostgreSQL users need no feature, as in 0.3.
 
 ## 0.3.2 (2026-11-02)
 

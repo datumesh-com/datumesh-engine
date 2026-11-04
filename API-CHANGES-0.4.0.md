@@ -11,7 +11,9 @@ their version, and those are now `datumesh-store` 0.4.0's, a semver-incompatible
 the store. A `PgStore` (or `SqliteStore`) from store 0.3 is not a store 0.4 `Store`, so users
 move to `datumesh-store` 0.4 together with this release; nothing else is asked of them.
 
-Behaviour: none changed. Code: none changed. Dependency: `datumesh-store` 0.4.0 (was 0.3.2).
+Behaviour: none changed. Code: none changed. Dependency: `datumesh-store` 0.4.0 (was 0.3.2),
+with `default-features = false`. Feature `sqlite` (new, off) enables the store's SQLite
+backend; it adds nothing to the engine's API (`--all-features` lists the same items with it).
 
 ## Full diff
 

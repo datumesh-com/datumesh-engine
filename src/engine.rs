@@ -121,8 +121,11 @@ impl EngineBuilder {
         self
     }
 
-    /// The `licence` of computed receipts: an SPDX identifier or an https URL (default
-    /// `CC-BY-4.0`).
+    /// The mesh's own licence: an SPDX identifier or an https URL (default `CC-BY-4.0`).
+    ///
+    /// Since 0.4.1 (spec-0.4.3, SPEC 8.5) it is the `licence` of computed receipts with no
+    /// input receipt (a constant, or only empty slices); a receipt with inputs inherits its
+    /// licence from theirs (see the crate documentation, "Licence inheritance").
     pub fn licence(mut self, licence: impl Into<String>) -> Self {
         self.licence = licence.into();
         self

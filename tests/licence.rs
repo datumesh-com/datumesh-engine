@@ -113,10 +113,7 @@ fn the_licence_vectors_of_spec_0_4_3_through_the_engine() {
         let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap().to_string();
         assert_eq!(s("fn"), CONVERT, "{id}");
         let Some(Value::Array(ls)) = v.get("licences") else { panic!("{id}: licences") };
-        let licences: Vec<String> = ls
-            .iter()
-            .map(|l| l.as_str().unwrap().to_string())
-            .collect();
+        let licences: Vec<String> = ls.iter().map(|l| l.as_str().unwrap().to_string()).collect();
         let decls = v.get("declarations").unwrap();
         let w = world();
         if decls.as_object().is_some_and(|m| !m.is_empty()) {
@@ -290,8 +287,7 @@ fn a_stored_version_the_rule_now_refuses_is_not_served() {
     let (id, why) = unlicensed(get(&w, &e, CONVERT, 1));
     assert_eq!((id, why), (cell.id(), LicenceReason::NotDeclared));
     // As of an earlier time too: the stored version is not served.
-    let (_, why) =
-        unlicensed(e.get(&w.cellref(CONVERT, &[("n", num("1"))]), Some("2024-03-20T00:00:00.000000Z")));
+    let (_, why) = unlicensed(e.get(&w.cellref(CONVERT, &[("n", num("1"))]), Some("2024-03-20T00:00:00.000000Z")));
     assert_eq!(why, LicenceReason::NotDeclared);
 }
 

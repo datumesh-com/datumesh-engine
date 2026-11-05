@@ -26,9 +26,9 @@
 //!
 //! `computed_by` is `<mesh host>#<key id>`, `publisher` the cell's namespace, `inputs` the
 //! hashes of the receipts read, `tx` the latest input `tx` (SPEC 8.2), `issued` the request's
-//! clock reading, `valid` the cell's valid-time arguments, `licence` and `summary` from the
-//! engine's configuration ([`EngineBuilder::licence`], [`EngineBuilder::summary`]): the
-//! descriptor has neither, and adding them would change function hashes.
+//! clock reading, `valid` the cell's valid-time arguments, `summary` from the engine's
+//! configuration ([`EngineBuilder::summary`]: the descriptor has none, and adding one would
+//! change function hashes), and `licence` by licence inheritance (below; since 0.4.1).
 //!
 //! `asof` is the latest of its input asofs (slice members included), the start of every name
 //! binding it relied on, every `T` of a transaction-time read and every `to` of a version
@@ -55,6 +55,38 @@
 //! The asof is never later than A. Between it and A the inputs and the bindings are those
 //! read, so the one receipt answers every request in between (and later ones, after
 //! validation).
+//!
+//! # Licence inheritance (spec-0.4.3, since 0.4.1)
+//!
+//! A computed receipt's `licence` is the result of SPEC 8.5 (`datumesh_core::inherit_licence`)
+//! over the licences of the input receipts it lists, one per receipt, every member of a slice
+//! entry included, at its `issued`: no inputs, the mesh's own licence
+//! ([`EngineBuilder::licence`]); open inputs only, the highest tier and within it the
+//! identifier listed last; one restricted licence, only if the function's publisher declared
+//! it for the function, open at `issued`. The declarations are those of the key document of
+//! the host of `cell.ns` (even when the mesh signing is another host), read from the store
+//! (`Store::namespace`) and only when a restricted input needs them; a host whose key document
+//! the store does not hold declares nothing. Stored receipts are untouched.
+//!
+//! A refusal (`share_alike_conflict`, `restricted_conflict`, `not_declared`,
+//! `declaration_not_open`) is [`EngineError::Unlicensed`], with the refused cell and the
+//! reason: nothing is signed or stored for the request, and a cell that reads a refused cell
+//! is refused too (the same error). The HTTP layer answers `unlicensed` (403).
+//!
+//! A computed version from the store (or the memo) is reused only while its licence is
+//! allowed: the rule over the input licences now read, judged at the version's own `issued`
+//! (as the entitlement check, SPEC 10.3, judges it: a declaration closed since does not
+//! matter), or giving that licence now. Otherwise the function is evaluated again and the
+//! cell is signed again with the rule's licence (a receipt signed before for exactly these
+//! inputs with an allowed licence is reused), or refused: a receipt signed before 0.4.1 under
+//! the configured licence over inputs that give another, or an input republished with the
+//! same value under another licence (early cutoff keeps the value, not the licence).
+//! Recomputation for a verifier ([`Resolver::evaluation`](datumesh_core::Resolver)) signs
+//! nothing and does not apply the rule to the cell it evaluates (SPEC 8.5: never in
+//! verification).
+//!
+//! Cost: the licences of a stored slice's members come from their receipts, read from the
+//! store (cached by hash) when a receipt over the slice is signed or validated.
 //!
 //! # Slices and transaction-time reads (spec-0.4.0)
 //!
@@ -204,6 +236,7 @@
 //! | `Err(NameUnresolved { .. })` | an input's name has no binding as of A | `error`, `E_FN_UNAVAILABLE` |
 //! | `Err(UndeclaredInput { .. })` | a function read a name it does not declare | `error`, `E_INPUT_UNDECLARED` |
 //! | `Err(NoRuntime { .. })`, `Runtime`, `Cycle`, `DepthExceeded`, `BudgetExceeded`, `WorkExceeded`, `BlobUnavailable` | the mesh could not evaluate the function | `error`, `E_EVAL_UNAVAILABLE` (or `stale` with an earlier receipt; never for an asof-dependent cell's receipt of another asof) |
+//! | `Err(Unlicensed { .. })` | licence inheritance refuses the cell, or a cell it reads (SPEC 8.5; since 0.4.1) | `unlicensed` (403) |
 //! | `Err(Sign(e))` | an input's `asof` is later than the clock (`E_TIME_ORDER`) | `error`, `E_TIME_ORDER` |
 //! | `Err(Store(e))` | the store failed | `error`, `E_INPUT_UNAVAILABLE` (or `stale`) |
 //!

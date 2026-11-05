@@ -14,8 +14,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use datumesh_core::{
-    lexical, Args, Cell, Error as CoreError, ErrorCode, Fault, FunctionDescriptor, Manifest, Receipt, ReceiptBuilder,
-    Scalar, Slice,
+    inherit_licence, lexical, Args, Cell, Declarations, Error as CoreError, ErrorCode, Fault, FunctionDescriptor,
+    Inheritance, KeyDocument, LicenceReason, Manifest, Receipt, ReceiptBuilder, Scalar, Slice,
 };
 
 use crate::cache::Parsed;
@@ -53,6 +53,8 @@ pub(crate) struct Ans {
     pub(crate) value: Scalar,
     pub(crate) tx: String,
     pub(crate) asof: String,
+    /// The receipt's licence (an input's, for licence inheritance: SPEC 8.5).
+    pub(crate) licence: String,
     /// The answer holds for every asof in `[lo, hi)` (`hi` none: unbounded), given the store
     /// as it was read and the names in `names` resolving as recorded.
     pub(crate) lo: String,
@@ -237,6 +239,9 @@ pub(crate) struct Req<'e> {
     fresh: Vec<Fresh>,
     /// Manifests of the slices runtimes read, by entry.
     manifests: BTreeMap<String, Arc<Vec<u8>>>,
+    /// The declarations of each publisher host (SPEC 9.2), read from the store once per
+    /// request: `None` when the store has no key document for the host, or one without.
+    declarations: HashMap<String, Option<Arc<Declarations>>>,
     /// The answers this request made (not taken from the memo), inputs first: for the memo.
     pub(crate) learned: Vec<Arc<Ans>>,
     budget: Budget,
@@ -306,6 +311,7 @@ impl<'e> Req<'e> {
             slices: HashMap::new(),
             fresh: Vec::new(),
             manifests: BTreeMap::new(),
+            declarations: HashMap::new(),
             learned: Vec::new(),
             budget: Budget::with_work(eng.fuel, eng.work_limit),
         }
@@ -427,6 +433,7 @@ impl<'e> Req<'e> {
             value: r.value().clone(),
             tx: r.tx().to_string(),
             asof: r.asof().to_string(),
+            licence: r.licence().to_string(),
             lo: r.asof().to_string(),
             hi,
             names: Arc::new(Names::new()),
@@ -563,8 +570,22 @@ impl<'e> Req<'e> {
         }
         let read = std::mem::take(read);
         let names = std::mem::take(names);
+        // Licence inheritance (SPEC 8.5): kept only while the rule allows its licence.
+        let parsed = self.eng.parsed(&ans.hash, &ans.bytes)?;
+        if !self.reusable(f, &read, &parsed.receipt)? {
+            f.state = State::FromStore;
+            return Ok(Step::Again);
+        }
         let facts = self.facts(&read, names);
-        Ok(Step::Done(Done::Value(self.kept(f, facts, &ans.hash, &ans.bytes, &ans.value, &ans.tx, &ans.asof))))
+        Ok(Step::Done(Done::Value(self.kept(
+            f,
+            facts,
+            &ans.hash,
+            &ans.bytes,
+            &ans.value,
+            (&ans.tx, &ans.asof),
+            &ans.licence,
+        ))))
     }
 
     /// The answer of a version kept: rechecked or validated.
@@ -576,8 +597,8 @@ impl<'e> Req<'e> {
         hash: &str,
         bytes: &Arc<Vec<u8>>,
         value: &Scalar,
-        tx: &str,
-        asof: &str,
+        (tx, asof): (&str, &str),
+        licence: &str,
     ) -> Arc<Ans> {
         let (lo, hi) = if self.asof_dependent(f) {
             (f.asof.clone(), Some(just_after(&f.asof)))
@@ -591,6 +612,7 @@ impl<'e> Req<'e> {
             value: value.clone(),
             tx: tx.to_string(),
             asof: asof.to_string(),
+            licence: licence.to_string(),
             lo,
             hi,
             names: facts.names,
@@ -652,9 +674,24 @@ impl<'e> Req<'e> {
         }
         let read = std::mem::take(read);
         let names = std::mem::take(names);
+        // Licence inheritance (SPEC 8.5): a version whose licence the rule no longer gives
+        // (a receipt signed before 0.4.1, an input now under another licence) is evaluated
+        // again, then signed again or refused.
+        if !self.reusable(f, &read, &cand.receipt)? {
+            f.state = State::Eval { cand: Some(cand) };
+            return Ok(Step::Again);
+        }
         let facts = self.facts(&read, names);
         let r = &cand.receipt;
-        Ok(Step::Done(Done::Value(self.kept(f, facts, r.hash(), &cand.bytes, r.value(), r.tx(), r.asof()))))
+        Ok(Step::Done(Done::Value(self.kept(
+            f,
+            facts,
+            r.hash(),
+            &cand.bytes,
+            r.value(),
+            (r.tx(), r.asof()),
+            r.licence(),
+        ))))
     }
 
     /// Whether input receipt `h` of a version still answers as of the asof.
@@ -1133,16 +1170,23 @@ impl<'e> Req<'e> {
             (facts.lo.as_str().max(asof.as_str()).to_string(), facts.hi.clone())
         };
         let memo = how.memo && facts.memo;
-        let existing = match &cand {
-            Some(c) if c.receipt.value() == &value && (!how.dependent || c.receipt.asof() == f.asof) => Some(c.clone()),
-            // The new version would share the old one's (tx, asof), which the store's key holds
-            // once (an input corrected with a tx earlier than another input's): a receipt
-            // signed before for exactly these inputs is reused rather than signing another.
-            Some(c) if c.receipt.tx() == tx && c.receipt.asof() == asof => {
-                self.signed_before(&f.id, &facts.entries, &value)?
+        let licences = self.licences(read)?;
+        let mut existing = None;
+        if let Some(c) = &cand {
+            if c.receipt.value() == &value
+                && (!how.dependent || c.receipt.asof() == f.asof)
+                && self.entitled_with(f, &licences, &c.receipt)?
+            {
+                existing = Some(c.clone());
+            } else if c.receipt.tx() == tx && c.receipt.asof() == asof {
+                // The new version would share the old one's (tx, asof), which the store's key
+                // holds once (an input corrected with a tx earlier than another input's; a
+                // version signed again for its licence): a receipt signed before for exactly
+                // these inputs, with a licence the rule allows, is reused rather than signing
+                // another.
+                existing = self.signed_before(f, &facts.entries, &value, &licences)?;
             }
-            _ => None,
-        };
+        }
         if let Some(p) = existing {
             let r = &p.receipt;
             return Ok(Arc::new(Ans {
@@ -1152,6 +1196,7 @@ impl<'e> Req<'e> {
                 value,
                 tx: r.tx().to_string(),
                 asof: r.asof().to_string(),
+                licence: r.licence().to_string(),
                 lo: lo.as_str().max(r.asof()).to_string(),
                 hi,
                 names: facts.names,
@@ -1160,6 +1205,13 @@ impl<'e> Req<'e> {
                 memo,
             }));
         }
+        // Licence inheritance (SPEC 8.5): the licence of the receipt to be issued now, or a
+        // refusal (nothing is signed; the request fails, and with it every reader).
+        let issued = self.issued.clone();
+        let rule = self.inherit(f, &licences, &issued, &self.eng.licence.clone())?;
+        let Some(licence) = rule.licence else {
+            return Err(EngineError::Unlicensed { cell_id: f.id.clone(), reason: rule.reason });
+        };
         let summary = match &self.eng.summary {
             Some(s) => s(&f.cell),
             None => format!("{} computed by {}.", f.cell.function_name(), self.eng.host),
@@ -1174,7 +1226,7 @@ impl<'e> Req<'e> {
             .publisher(f.cell.ns.clone())
             .signer_host(self.eng.host.clone())
             .inputs(facts.entries.iter().cloned())
-            .licence(self.eng.licence.clone())
+            .licence(licence.clone())
             .summary(summary)
             .sign(&self.eng.key)
             .map_err(EngineError::Sign)?;
@@ -1199,6 +1251,7 @@ impl<'e> Req<'e> {
             value,
             tx,
             asof,
+            licence,
             lo,
             hi,
             names: facts.names,
@@ -1229,14 +1282,17 @@ impl<'e> Req<'e> {
         Ok(out)
     }
 
-    /// A stored receipt of cell `id` by this mesh with exactly the inputs `entries` and
-    /// `value`.
+    /// A stored receipt of frame `f`'s cell by this mesh with exactly the inputs `entries`
+    /// and `value`, and a licence the rule allows for the input licences `licences`
+    /// ([`entitled_with`](Req::entitled_with)).
     fn signed_before(
         &mut self,
-        id: &str,
+        f: &Frame,
         entries: &BTreeSet<String>,
         value: &Scalar,
+        licences: &[String],
     ) -> Result<Option<Arc<Parsed>>, EngineError> {
+        let id = f.id.as_str();
         let Some(first) = entries.iter().next() else { return Ok(None) };
         let candidates = if first.starts_with("slice:") {
             self.eng.store.slice_dependents(first).map_err(|e| StoreError::new("slice_dependents", e))?
@@ -1251,11 +1307,97 @@ impl<'e> Req<'e> {
                 && r.inputs().len() == entries.len()
                 && r.inputs().iter().zip(entries.iter()).all(|(a, b)| a == b)
                 && r.cell().id() == id
+                && self.entitled_with(f, licences, r)?
             {
                 return Ok(Some(p));
             }
         }
         Ok(None)
+    }
+
+    /// The licences of the input receipts of `read` (SPEC 8.5): one per receipt read, every
+    /// member of a slice included (a stored slice's members from their receipts in the store).
+    fn licences(&mut self, read: &[Rd]) -> Result<Vec<String>, EngineError> {
+        let mut out = Vec::new();
+        for rd in read {
+            match rd {
+                Rd::Cell { ans, .. } => out.push(ans.licence.clone()),
+                Rd::Slice(s) if s.computed => out.extend(s.member_ans.iter().map(|a| a.licence.clone())),
+                Rd::Slice(s) => {
+                    for m in &s.members {
+                        let Some(p) = self.receipt(&m.hash)? else {
+                            return Err(StoreError::new(
+                                "receipt",
+                                datumesh_store::Error::NotFound { what: "receipt", key: m.hash.clone() },
+                            )
+                            .into());
+                        };
+                        out.push(p.receipt.licence().to_string());
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The declarations of the publisher of namespace `ns` (the host of `ns`, SPEC 8.5), from
+    /// its key document in the store; none when the store has no document for the host, or
+    /// one without declarations.
+    fn declarations(&mut self, ns: &str) -> Result<Option<Arc<Declarations>>, EngineError> {
+        let host = ns.split('/').next().unwrap_or(ns);
+        if let Some(d) = self.declarations.get(host) {
+            return Ok(d.clone());
+        }
+        let d = match self.eng.store.namespace(host).map_err(|e| StoreError::new("namespace", e))? {
+            // The store checked the document when it was recorded (SPEC 9.2).
+            Some(n) => KeyDocument::from_json(host, &n.keydoc).ok().and_then(|k| k.declarations).map(Arc::new),
+            None => None,
+        };
+        self.declarations.insert(host.to_string(), d.clone());
+        Ok(d)
+    }
+
+    /// Licence inheritance (SPEC 8.5, core's `inherit_licence`) for frame `f`'s cell over the
+    /// input licences `licences`, for a receipt issued at `issued`; `mesh_licence` for a cell
+    /// with no input. The publisher's declarations are read only when the rule needs them (a
+    /// restricted input).
+    fn inherit(
+        &mut self,
+        f: &Frame,
+        licences: &[String],
+        issued: &str,
+        mesh_licence: &str,
+    ) -> Result<Inheritance, EngineError> {
+        let function = f.cell.function_name();
+        let without = inherit_licence(licences, None, &function, issued, mesh_licence);
+        if !matches!(without.reason, LicenceReason::NotDeclared | LicenceReason::DeclarationNotOpen) {
+            return Ok(without);
+        }
+        let d = self.declarations(&f.cell.ns)?;
+        Ok(inherit_licence(licences, d.as_deref(), &function, issued, mesh_licence))
+    }
+
+    /// Whether receipt `r` of frame `f`'s cell may be reused over inputs with licences
+    /// `licences`: entitled at its own `issued` (its licence is the rule's then, as the
+    /// entitlement check judges it, SPEC 10.3; a declaration closed since does not matter),
+    /// or its licence is the one the rule gives now.
+    fn entitled_with(&mut self, f: &Frame, licences: &[String], r: &Receipt) -> Result<bool, EngineError> {
+        let then = self.inherit(f, licences, r.issued(), r.licence())?;
+        if then.licence.as_deref() == Some(r.licence()) {
+            return Ok(true);
+        }
+        let issued = self.issued.clone();
+        let now = self.inherit(f, licences, &issued, &self.eng.licence.clone())?;
+        Ok(now.licence.as_deref() == Some(r.licence()))
+    }
+
+    /// [`entitled_with`](Req::entitled_with) over the licences of `read`.
+    fn reusable(&mut self, f: &Frame, read: &[Rd], r: &Receipt) -> Result<bool, EngineError> {
+        if r.inputs().is_empty() {
+            return Ok(true);
+        }
+        let licences = self.licences(read)?;
+        self.entitled_with(f, &licences, r)
     }
 
     /// Writes the request's new manifests, receipts and computed versions: manifests and

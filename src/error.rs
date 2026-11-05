@@ -245,6 +245,19 @@ pub enum EngineError {
     /// carries the code (`E_CANON_INSTANT`, `E_SLICE`, `E_ARG_UNKNOWN`, ...). Added to the
     /// brief's list.
     Invalid(datumesh_core::Error),
+    /// The mesh may not compute the cell under licence inheritance (SPEC 8.5, spec-0.4.3): its
+    /// input licences have no licence in common (`share_alike_conflict`,
+    /// `restricted_conflict`), or a restricted input licence is not declared for the function
+    /// by its publisher, open at the receipt's `issued` (`not_declared`,
+    /// `declaration_not_open`). Nothing was signed or stored for the request. `cell_id` is
+    /// the refused cell: the requested one, or a cell it reads (a reader of a refused cell is
+    /// refused too). The HTTP layer answers `unlicensed` (403, no new code). Since 0.4.1.
+    Unlicensed {
+        /// The cell the rule refused.
+        cell_id: String,
+        /// Why (never one of the reasons that give a licence).
+        reason: datumesh_core::LicenceReason,
+    },
     /// A computed receipt could not be signed: the core refused its members. In practice an
     /// input whose `asof` is later than the engine's clock (`E_TIME_ORDER`: `asof <= issued`).
     /// Added to the brief's list.
@@ -271,6 +284,9 @@ impl fmt::Display for EngineError {
             EngineError::Runtime { cell_id, message } => write!(f, "runtime, evaluating cell {cell_id}: {message}"),
             EngineError::BlobUnavailable { sha256, reason } => {
                 write!(f, "the content of blob {sha256} is unavailable: {reason}; nothing was stored")
+            }
+            EngineError::Unlicensed { cell_id, reason } => {
+                write!(f, "licence inheritance refuses to compute cell {cell_id}: {reason}; nothing was stored")
             }
             EngineError::Invalid(e) => write!(f, "invalid request: {e}"),
             EngineError::Sign(e) => write!(f, "cannot sign the computed receipt: {e}"),

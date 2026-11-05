@@ -2,6 +2,52 @@
 
 All notable changes to `datumesh-engine`.
 
+## 0.4.1 (unreleased)
+
+For spec-0.4.3: licence inheritance (SPEC 8.5). On `datumesh-core` 0.3.7 (was 0.3.5).
+Additive (`API-CHANGES-0.4.1.md`).
+
+### Added
+
+- `EngineError::Unlicensed { cell_id, reason }` (a variant of a `#[non_exhaustive]` enum): the
+  mesh may not compute the cell under licence inheritance (`share_alike_conflict`,
+  `restricted_conflict`, `not_declared`, `declaration_not_open`, core's `LicenceReason`).
+  Nothing is signed or stored for the request; a cell that reads a refused cell is refused
+  too (`cell_id` names the refused cell). The HTTP layer answers `unlicensed` (403), with no
+  new code.
+
+### Changed
+
+- **A computed receipt's `licence` is the result of SPEC 8.5** (core's `inherit_licence`), no
+  longer the configured licence: over the licences of the input receipts it lists, one per
+  receipt, every member of a slice entry included, at its `issued`. A restricted input
+  licence needs a declaration for the function by its publisher, open at `issued`, read from
+  the key document of the host of `cell.ns` in the store (`Store::namespace`; even when the
+  mesh signing is another host). A host whose key document the store does not hold declares
+  nothing (a restricted input is then `not_declared`). `EngineBuilder::licence` is the mesh's
+  own licence: that of a receipt with no input receipt. Stored receipts are untouched.
+- **Reuse.** A computed version (from the store or the memo) is reused only while its licence
+  is allowed for the input licences read now: entitled at its own `issued` (as the
+  entitlement check, SPEC 10.3, judges it: a declaration closed since does not matter), or
+  the licence the rule gives now. Otherwise the function is evaluated again and the cell
+  signed again with the rule's licence (a receipt signed before for exactly these inputs,
+  with an allowed licence, is reused), or refused. This covers receipts signed before 0.4.1
+  under the configured licence (they are signed again, or refused, on their next request;
+  nothing needs migrating), and an input republished with the same value under another
+  licence (early cutoff keeps a value, not a licence).
+- Recomputation for a verifier (`Resolver::evaluation`) does not apply the rule to the cell it
+  evaluates (SPEC 8.5: never in verification).
+
+### Notes
+
+- The `licence` vectors of spec-0.4.3 (50) run through the engine's own path
+  (`tests/licence.rs`, copied into `tests/vectors/licence/`): all 50.
+- Cost: the licences of a stored slice's members come from their receipts in the store
+  (cached by hash), read when a receipt over the slice is signed or validated.
+- Compatibility: a mesh that serves `declarations` is unverifiable by clients on core < 0.3.7
+  or datumesh < 0.4.3; publishers should wait for their consumers to upgrade before declaring.
+  The same holds for @datumesh/verify < 0.4.3.
+
 ## 0.4.0 (unreleased)
 
 On `datumesh-store` 0.4.0 (was 0.3.2), so that an engine can run on its SQLite backend

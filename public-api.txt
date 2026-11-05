@@ -53,6 +53,9 @@ pub datumesh_engine::EngineError::Sign(datumesh_core::error::Error)
 pub datumesh_engine::EngineError::Store(datumesh_engine::StoreError)
 pub datumesh_engine::EngineError::UndeclaredInput
 pub datumesh_engine::EngineError::UndeclaredInput::fn_name: alloc::string::String
+pub datumesh_engine::EngineError::Unlicensed
+pub datumesh_engine::EngineError::Unlicensed::cell_id: alloc::string::String
+pub datumesh_engine::EngineError::Unlicensed::reason: datumesh_core::licence::LicenceReason
 pub datumesh_engine::EngineError::WorkExceeded
 pub datumesh_engine::EngineError::WorkExceeded::limit: u64
 impl core::clone::Clone for datumesh_engine::EngineError

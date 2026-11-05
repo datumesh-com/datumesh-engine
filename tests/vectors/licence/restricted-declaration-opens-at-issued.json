@@ -1,0 +1,22 @@
+{
+  "id": "licence/restricted-declaration-opens-at-issued",
+  "kind": "licence",
+  "description": "spec-0.4.3: A declaration opening at issued is open then.",
+  "valid": true,
+  "licences": [
+    "https://rates.example.org/licences/restricted"
+  ],
+  "declarations": {
+    "calc.example.net/convert": [
+      {
+        "licence": "https://rates.example.org/licences/restricted",
+        "valid_from": "2024-03-16T09:00:00.000000Z"
+      }
+    ]
+  },
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": "https://rates.example.org/licences/restricted",
+  "reason": "declared"
+}

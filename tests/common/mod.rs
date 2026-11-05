@@ -137,6 +137,26 @@ pub fn key_doc(host: &str, key: &SigningKey) -> Vec<u8> {
     .into_bytes()
 }
 
+/// A key document publishing `key` for `host` from 2000 on, with `declarations` (the JSON text
+/// of the member, spec-0.4.3), canonical JSON.
+pub fn key_doc_with(host: &str, key: &SigningKey, declarations: &str) -> Vec<u8> {
+    let plain = key_doc(host, key);
+    let mut v = json::parse(&plain).unwrap();
+    let Value::Object(m) = &mut v else { unreachable!() };
+    m.insert(0, ("declarations".into(), json::parse(declarations.as_bytes()).unwrap()));
+    v.to_jcs()
+}
+
+/// The declarations member for one function and one licence: `[from, to)` (`to` none: open).
+pub fn declaration(fn_name: &str, licence: &str, from: &str, to: Option<&str>) -> String {
+    match to {
+        Some(t) => format!(r#"{{"{fn_name}":[{{"licence":"{licence}","valid_from":"{from}","valid_to":"{t}"}}]}}"#),
+        None => format!(r#"{{"{fn_name}":[{{"licence":"{licence}","valid_from":"{from}"}}]}}"#),
+    }
+}
+
+static VALIDATED: AtomicU32 = AtomicU32::new(0);
+
 pub fn all_keys() -> Keys {
     let mut keys = Keys::new();
     for host in [MESH, RATES, PRICES, CALC] {
@@ -317,8 +337,21 @@ impl World {
         CellRef { ns: ns.into(), fn_name: f.into(), args: args(a), asof: None }
     }
 
+    /// Replaces `host`'s key document in the store by one with `declarations` (the JSON text
+    /// of the member; spec-0.4.3).
+    pub fn declare(&self, host: &str, declarations: &str) {
+        let n = VALIDATED.fetch_add(1, Ordering::SeqCst);
+        let at = format!("2021-01-01T00:{:02}:{:02}.000000Z", (n / 60) % 60, n % 60);
+        self.store.put_namespace(host, &key_doc_with(host, &key_for(host), declarations), &at).unwrap();
+    }
+
     /// A receipt of a stored cell signed by its publisher (the host of its namespace).
     pub fn sign_stored(&self, cell: &Cell, value: Scalar, tx: &str, asof: &str) -> Vec<u8> {
+        self.sign_stored_licensed(cell, value, tx, asof, "CC-BY-4.0")
+    }
+
+    /// The same under `licence`.
+    pub fn sign_stored_licensed(&self, cell: &Cell, value: Scalar, tx: &str, asof: &str, licence: &str) -> Vec<u8> {
         let host = cell.ns.split('/').next().unwrap().to_string();
         let r = ReceiptBuilder::new()
             .cell(cell.clone())
@@ -329,7 +362,7 @@ impl World {
             .issued(asof)
             .publisher(cell.ns.clone())
             .signer_host(host.clone())
-            .licence("CC-BY-4.0")
+            .licence(licence)
             .summary(format!("A value of {}.", cell.function_name()))
             .sign(&key_for(&host))
             .unwrap();
@@ -345,6 +378,15 @@ impl World {
     /// The same with `asof` later than `tx` (a late-signed receipt).
     pub fn publish_late(&self, cell: &Cell, value: &str, tx: &str, asof: &str) -> String {
         let bytes = self.sign_stored(cell, num(value), tx, asof);
+        let h = self.store.put_receipt(&bytes).unwrap();
+        self.store.put_version(&cell.id(), tx, &h).unwrap();
+        self.notify(&cell.id());
+        h
+    }
+
+    /// Publishes a stored version under `licence` (spec-0.4.3 tests). Returns the receipt hash.
+    pub fn publish_licensed(&self, cell: &Cell, value: &str, tx: &str, licence: &str) -> String {
+        let bytes = self.sign_stored_licensed(cell, num(value), tx, tx, licence);
         let h = self.store.put_receipt(&bytes).unwrap();
         self.store.put_version(&cell.id(), tx, &h).unwrap();
         self.notify(&cell.id());

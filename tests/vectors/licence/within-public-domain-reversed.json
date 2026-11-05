@@ -1,0 +1,16 @@
+{
+  "id": "licence/within-public-domain-reversed",
+  "kind": "licence",
+  "description": "spec-0.4.3: The order of the inputs does not matter: PDDL-1.0.",
+  "valid": true,
+  "licences": [
+    "PDDL-1.0",
+    "CC0-1.0"
+  ],
+  "declarations": {},
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": "PDDL-1.0",
+  "reason": "open"
+}

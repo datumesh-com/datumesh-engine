@@ -1,0 +1,22 @@
+{
+  "id": "licence/restricted-declared-other-licence",
+  "kind": "licence",
+  "description": "spec-0.4.3: A declaration names one exact licence string; another restricted licence is not declared.",
+  "valid": true,
+  "licences": [
+    "https://rates.example.org/licences/restricted"
+  ],
+  "declarations": {
+    "calc.example.net/convert": [
+      {
+        "licence": "https://rates.example.org/licences/other",
+        "valid_from": "2020-01-01T00:00:00.000000Z"
+      }
+    ]
+  },
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": null,
+  "reason": "not_declared"
+}

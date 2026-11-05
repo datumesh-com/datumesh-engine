@@ -1,0 +1,13 @@
+{
+  "id": "licence/no-inputs-restricted-own",
+  "kind": "licence",
+  "description": "spec-0.4.3: no input receipt: the mesh's own licence, whatever it is; the rule does not constrain it.",
+  "valid": true,
+  "licences": [],
+  "declarations": {},
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "https://rates.example.org/licences/restricted",
+  "licence": "https://rates.example.org/licences/restricted",
+  "reason": "no_inputs"
+}

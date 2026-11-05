@@ -1,0 +1,15 @@
+{
+  "id": "licence/lowercase-id-is-restricted",
+  "kind": "licence",
+  "description": "spec-0.4.3: cc0-1.0 is not CC0-1.0: an unlisted id, so restricted.",
+  "valid": true,
+  "licences": [
+    "cc0-1.0"
+  ],
+  "declarations": {},
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": null,
+  "reason": "not_declared"
+}

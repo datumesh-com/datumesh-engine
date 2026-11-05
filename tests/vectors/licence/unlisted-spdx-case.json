@@ -1,0 +1,22 @@
+{
+  "id": "licence/unlisted-spdx-case",
+  "kind": "licence",
+  "description": "spec-0.4.3: Licences are compared byte for byte: a declaration of cc-by-nc-4.0 does not declare CC-BY-NC-4.0.",
+  "valid": true,
+  "licences": [
+    "CC-BY-NC-4.0"
+  ],
+  "declarations": {
+    "calc.example.net/convert": [
+      {
+        "licence": "cc-by-nc-4.0",
+        "valid_from": "2020-01-01T00:00:00.000000Z"
+      }
+    ]
+  },
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": null,
+  "reason": "not_declared"
+}

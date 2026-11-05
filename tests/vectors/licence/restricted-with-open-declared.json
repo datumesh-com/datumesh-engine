@@ -1,0 +1,24 @@
+{
+  "id": "licence/restricted-with-open-declared",
+  "kind": "licence",
+  "description": "spec-0.4.3: A declared restricted input with public-domain and attribution ones: the restricted licence wins.",
+  "valid": true,
+  "licences": [
+    "CC0-1.0",
+    "https://rates.example.org/licences/restricted",
+    "CC-BY-4.0"
+  ],
+  "declarations": {
+    "calc.example.net/convert": [
+      {
+        "licence": "https://rates.example.org/licences/restricted",
+        "valid_from": "2020-01-01T00:00:00.000000Z"
+      }
+    ]
+  },
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": "https://rates.example.org/licences/restricted",
+  "reason": "declared"
+}

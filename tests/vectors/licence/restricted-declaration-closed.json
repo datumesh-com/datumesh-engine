@@ -1,0 +1,23 @@
+{
+  "id": "licence/restricted-declaration-closed",
+  "kind": "licence",
+  "description": "spec-0.4.3: The declaration was closed before issued.",
+  "valid": true,
+  "licences": [
+    "https://rates.example.org/licences/restricted"
+  ],
+  "declarations": {
+    "calc.example.net/convert": [
+      {
+        "licence": "https://rates.example.org/licences/restricted",
+        "valid_from": "2020-01-01T00:00:00.000000Z",
+        "valid_to": "2024-01-01T00:00:00.000000Z"
+      }
+    ]
+  },
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": null,
+  "reason": "declaration_not_open"
+}

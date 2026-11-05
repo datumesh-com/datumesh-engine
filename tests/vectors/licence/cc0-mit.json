@@ -1,0 +1,16 @@
+{
+  "id": "licence/cc0-mit",
+  "kind": "licence",
+  "description": "spec-0.4.3: Public domain and attribution: the higher tier.",
+  "valid": true,
+  "licences": [
+    "CC0-1.0",
+    "MIT"
+  ],
+  "declarations": {},
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": "MIT",
+  "reason": "open"
+}

@@ -1,0 +1,18 @@
+{
+  "id": "licence/within-attribution-all",
+  "kind": "licence",
+  "description": "spec-0.4.3: Every attribution id: the last listed, OGL-UK-3.0.",
+  "valid": true,
+  "licences": [
+    "CC-BY-4.0",
+    "OGL-UK-3.0",
+    "Apache-2.0",
+    "MIT"
+  ],
+  "declarations": {},
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": "OGL-UK-3.0",
+  "reason": "open"
+}

@@ -1,0 +1,15 @@
+{
+  "id": "licence/unlisted-spdx-undeclared",
+  "kind": "licence",
+  "description": "spec-0.4.3: An SPDX id not in tiers 1-3 is restricted.",
+  "valid": true,
+  "licences": [
+    "CC-BY-NC-4.0"
+  ],
+  "declarations": {},
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": null,
+  "reason": "not_declared"
+}

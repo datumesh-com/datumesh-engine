@@ -1,0 +1,18 @@
+{
+  "id": "licence/share-alike-two-ids-with-open",
+  "kind": "licence",
+  "description": "spec-0.4.3: Two different share-alike ids among open inputs: refused.",
+  "valid": true,
+  "licences": [
+    "CC0-1.0",
+    "ODbL-1.0",
+    "MIT",
+    "CC-BY-SA-4.0"
+  ],
+  "declarations": {},
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": null,
+  "reason": "share_alike_conflict"
+}

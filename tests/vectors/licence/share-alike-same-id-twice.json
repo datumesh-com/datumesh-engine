@@ -1,0 +1,16 @@
+{
+  "id": "licence/share-alike-same-id-twice",
+  "kind": "licence",
+  "description": "spec-0.4.3: One share-alike id from two inputs.",
+  "valid": true,
+  "licences": [
+    "ODbL-1.0",
+    "ODbL-1.0"
+  ],
+  "declarations": {},
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": "ODbL-1.0",
+  "reason": "open"
+}

@@ -1,0 +1,27 @@
+{
+  "id": "licence/unlisted-spdx-and-url",
+  "kind": "licence",
+  "description": "spec-0.4.3: An unlisted SPDX id and a licence URL are two different restricted licences: refused.",
+  "valid": true,
+  "licences": [
+    "CC-BY-NC-4.0",
+    "https://rates.example.org/licences/restricted"
+  ],
+  "declarations": {
+    "calc.example.net/convert": [
+      {
+        "licence": "CC-BY-NC-4.0",
+        "valid_from": "2020-01-01T00:00:00.000000Z"
+      },
+      {
+        "licence": "https://rates.example.org/licences/restricted",
+        "valid_from": "2020-01-01T00:00:00.000000Z"
+      }
+    ]
+  },
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": null,
+  "reason": "restricted_conflict"
+}

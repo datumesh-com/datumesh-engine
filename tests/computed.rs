@@ -128,7 +128,10 @@ fn licence_and_summary_come_from_the_engine_configuration() {
     w.publish(&w.cell(FX, &[("quote", text("USD"))]), "3", &t(15, 16));
     w.publish(&w.cell(PRICE, &[("item", text("nut"))]), "1", &t(15, 17));
     let r = receipt_of(&e.get(&w.cellref(TOTAL, &[("item", text("nut"))]), Some(&t(20, 0))).unwrap());
-    assert_eq!(r.licence(), "https://example.com/licence");
+    // Since 0.4.1 (spec-0.4.3, SPEC 8.5) the licence of a cell with inputs is inherited from
+    // them (here CC-BY-4.0); the configured licence is that of a cell with none
+    // (tests/licence.rs, a_constant_carries_the_mesh_licence).
+    assert_eq!(r.licence(), "CC-BY-4.0");
     assert_eq!(r.summary(), "Total for nut.");
     w.verify_all_issued(&e, "computed_licence");
 }

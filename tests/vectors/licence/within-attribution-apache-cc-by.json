@@ -1,0 +1,16 @@
+{
+  "id": "licence/within-attribution-apache-cc-by",
+  "kind": "licence",
+  "description": "spec-0.4.3: Two attribution ids: the last listed.",
+  "valid": true,
+  "licences": [
+    "Apache-2.0",
+    "CC-BY-4.0"
+  ],
+  "declarations": {},
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": "CC-BY-4.0",
+  "reason": "open"
+}

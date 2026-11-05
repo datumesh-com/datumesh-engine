@@ -1,0 +1,24 @@
+{
+  "id": "licence/restricted-declared-with-share-alike",
+  "kind": "licence",
+  "description": "spec-0.4.3: A declared restricted input with one share-alike input: refused. Share-alike requires the result to carry it, a restricted licence forbids that, and no single licence satisfies both (D75 as revised).",
+  "valid": true,
+  "licences": [
+    "CC-BY-SA-4.0",
+    "https://rates.example.org/licences/restricted",
+    "CC0-1.0"
+  ],
+  "declarations": {
+    "calc.example.net/convert": [
+      {
+        "licence": "https://rates.example.org/licences/restricted",
+        "valid_from": "2020-01-01T00:00:00.000000Z"
+      }
+    ]
+  },
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": null,
+  "reason": "share_alike_conflict"
+}

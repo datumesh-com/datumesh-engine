@@ -1,0 +1,24 @@
+{
+  "id": "licence/restricted-with-share-alike-conflict",
+  "kind": "licence",
+  "description": "spec-0.4.3: Two share-alike ids and a declared restricted input: refused, share_alike_conflict (D75 as revised).",
+  "valid": true,
+  "licences": [
+    "CC-BY-SA-4.0",
+    "ODbL-1.0",
+    "https://rates.example.org/licences/restricted"
+  ],
+  "declarations": {
+    "calc.example.net/convert": [
+      {
+        "licence": "https://rates.example.org/licences/restricted",
+        "valid_from": "2020-01-01T00:00:00.000000Z"
+      }
+    ]
+  },
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": null,
+  "reason": "share_alike_conflict"
+}

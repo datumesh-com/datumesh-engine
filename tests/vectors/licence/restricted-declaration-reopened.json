@@ -1,0 +1,27 @@
+{
+  "id": "licence/restricted-declaration-reopened",
+  "kind": "licence",
+  "description": "spec-0.4.3: Closed, then declared again in a second entry: the second is open at issued.",
+  "valid": true,
+  "licences": [
+    "https://rates.example.org/licences/restricted"
+  ],
+  "declarations": {
+    "calc.example.net/convert": [
+      {
+        "licence": "https://rates.example.org/licences/restricted",
+        "valid_from": "2020-01-01T00:00:00.000000Z",
+        "valid_to": "2022-01-01T00:00:00.000000Z"
+      },
+      {
+        "licence": "https://rates.example.org/licences/restricted",
+        "valid_from": "2023-01-01T00:00:00.000000Z"
+      }
+    ]
+  },
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": "https://rates.example.org/licences/restricted",
+  "reason": "declared"
+}

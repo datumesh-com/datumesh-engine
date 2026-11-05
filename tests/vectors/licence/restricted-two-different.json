@@ -1,0 +1,16 @@
+{
+  "id": "licence/restricted-two-different",
+  "kind": "licence",
+  "description": "spec-0.4.3: Two different restricted licences: a receipt carries one licence (D20), so the mesh refuses.",
+  "valid": true,
+  "licences": [
+    "https://rates.example.org/licences/restricted",
+    "https://rates.example.org/licences/other"
+  ],
+  "declarations": {},
+  "fn": "calc.example.net/convert",
+  "issued": "2024-03-16T09:00:00.000000Z",
+  "mesh_licence": "CC-BY-4.0",
+  "licence": null,
+  "reason": "restricted_conflict"
+}

@@ -139,7 +139,9 @@ fn a_pinned_read_relies_on_no_binding() {
     // by another; and the receipt is the same.
     w.store.bind_name(P, &h3, BIND_P3).unwrap();
     let calls = (w.calls("p1"), w.calls(R));
-    assert_eq!(calls, (1, 1));
+    // R ran twice for its first request: once suspending on the pinned input, once after it
+    // (a restart); nothing runs again below.
+    assert_eq!(calls, (1, 2));
     let cold = w.engine();
     for eng in [&e, &cold] {
         let again = eng.get(&w.cellref(R, &[]), Some(&t(21, 0))).unwrap();

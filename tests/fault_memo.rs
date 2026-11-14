@@ -106,7 +106,9 @@ fn a_faulted_input_is_not_evaluated_again_by_its_readers_and_the_fault_follows_i
     assert_eq!(e.get(&w.cellref(READER, &[]), Some(&t(20, 0))).unwrap(), faulted(Fault::DivZero));
     assert_eq!(e.get(&w.cellref(INV, &[]), Some(&t(20, 0))).unwrap(), faulted(Fault::DivZero));
     assert_eq!(e.get(&w.cellref(READER, &[]), Some(&t(20, 0))).unwrap(), faulted(Fault::DivZero));
-    assert_eq!((w.calls(INV), w.calls(READER)), (1, 1));
+    // READER runs twice for its first request: it suspends on the uncomputed input and runs again
+    // once the input is answered (a restart, as budget.rs counts them); never again after that.
+    assert_eq!((w.calls(INV), w.calls(READER)), (1, 2));
     // Once s changes, a later asof is not answered by the memoised fault.
     w.publish(&s, "4", &t(21, 0));
     assert_eq!(receipt_of(&e.get(&w.cellref(INV, &[]), Some(&t(22, 0))).unwrap()).value(), &num("250"));

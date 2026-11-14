@@ -61,6 +61,9 @@ pub datumesh_engine::EngineError::Invalid(datumesh_core::error::Error)
 pub datumesh_engine::EngineError::NameUnresolved
 pub datumesh_engine::EngineError::NameUnresolved::asof: alloc::string::String
 pub datumesh_engine::EngineError::NameUnresolved::fn_name: alloc::string::String
+pub datumesh_engine::EngineError::NamespaceSuspended
+pub datumesh_engine::EngineError::NamespaceSuspended::host: alloc::string::String
+pub datumesh_engine::EngineError::NamespaceSuspended::suspended_at: alloc::string::String
 pub datumesh_engine::EngineError::NoRuntime
 pub datumesh_engine::EngineError::NoRuntime::fn_hash: alloc::string::String
 pub datumesh_engine::EngineError::NoRuntime::lang: alloc::string::String
@@ -273,6 +276,7 @@ pub fn datumesh_engine::Inputs::read(&mut self, &str, &datumesh_core::model::Arg
 pub fn datumesh_engine::Inputs::read_asof(&mut self, &str, &datumesh_core::model::Args, &str) -> core::result::Result<datumesh_engine::Input, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read_blob(&mut self, &str, u64) -> core::result::Result<alloc::vec::Vec<u8>, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read_cell(&mut self, &str, &datumesh_core::model::Args) -> core::result::Result<datumesh_engine::Input, datumesh_engine::EvalError>
+pub fn datumesh_engine::Inputs::read_pinned(&mut self, &str, &str, &datumesh_core::model::Args) -> core::result::Result<datumesh_engine::Input, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read_slice(&mut self, &str, &datumesh_engine::SlicePattern) -> core::result::Result<alloc::vec::Vec<datumesh_engine::Member>, datumesh_engine::EvalError>
 pub fn datumesh_engine::Inputs::read_versions(&mut self, &str, &datumesh_core::model::Args, &str, &str) -> core::result::Result<alloc::vec::Vec<datumesh_engine::Input>, datumesh_engine::EvalError>
 pub trait datumesh_engine::Runtime: core::marker::Send + core::marker::Sync

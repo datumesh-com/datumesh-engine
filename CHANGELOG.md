@@ -2,6 +2,48 @@
 
 All notable changes to `datumesh-engine`.
 
+## 0.4.2 (unreleased)
+
+For spec-0.5.0: suspension (SPEC 9.9), faults memoised (SPEC 15.12, formula finding H9),
+pinned reads by hash (SPEC 16.3 `super`, finding H8), methods as ordinary functions (SPEC
+16.3, 16.7). On `datumesh-core` 0.3.8 (was 0.3.7) and `datumesh-store` 0.4.1 (was 0.4.0).
+Additive (`API-CHANGES-0.4.2.md`): nothing removed or changed.
+
+### Added
+
+- `EngineError::NamespaceSuspended { host, suspended_at }` (a variant of a `#[non_exhaustive]`
+  enum): a write the engine makes under a suspended namespace is refused by the store
+  (`datumesh_store::Error::NamespaceSuspended`), and the engine says so. A request that must
+  sign a receipt under the mesh's own suspended namespace fails with it before any write:
+  nothing is signed or stored, and the cell's and its readers' answers are not memoised as
+  answers. Reads, verification and the receipts already stored go on, served byte for byte;
+  `Resolver::evaluate` gives no value where a new receipt would be needed. Other store errors
+  stay `EngineError::Store`.
+- `Inputs::read_pinned(fn_name, fn_hash, args)` (a provided method of the public `Inputs`
+  trait, default `EvalError::Runtime`, so no implementor is affected): the cell of `fn_name`
+  at the function hash `fn_hash`, `P/m@<fn_hash>(...)`, evaluated with the descriptor stored
+  under that hash and relying on no binding of the name. Its receipt is an input of the reader
+  as any read's is. `fn_name` must be declared by the reader's descriptor (the `super` of a
+  method lists its parent method as an input). The engine's inputs override it.
+
+### Changed
+
+- **Faults are memoised** (SPEC 15.12 and D58: a fault is a property of the cell). A cell whose
+  evaluation faulted is evaluated once while nothing it read has changed, for every fault code
+  (`E_FORMULA_KEY` and `E_FORMULA_DISPATCH_KEY` included, as the others), and a reader of a
+  faulted cell is answered from the memo. A memoised fault holds for the asofs an answer would
+  hold for, and is dropped when a stored version it rests on is added. A fault that rests on an
+  absent slice member or on an input with no value is not memoised. `MemoStats::entries` counts
+  the faults held as well as the answers.
+- The validation of a version's inputs checks a pinned input (`read_pinned`) by its hash alone,
+  and records no name for it: a name that did not resolve to the hash at the version's asof was
+  not read by name.
+
+### Notes
+
+- The suspension tests run on PostgreSQL only: the engine's test world has no SQLite backend.
+  The `sqlite` feature adds no test of it.
+
 ## 0.4.1 (unreleased)
 
 For spec-0.4.3: licence inheritance (SPEC 8.5). On `datumesh-core` 0.3.7 (was 0.3.5).

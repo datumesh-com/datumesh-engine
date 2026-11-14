@@ -319,8 +319,15 @@ impl std::error::Error for EngineError {
 }
 
 impl From<StoreError> for EngineError {
+    /// A store's refusal of a write under a suspended namespace (SPEC 9.9) is
+    /// [`EngineError::NamespaceSuspended`]; any other store failure is [`EngineError::Store`].
     fn from(e: StoreError) -> EngineError {
-        EngineError::Store(e)
+        match &*e.inner {
+            datumesh_store::Error::NamespaceSuspended { host, suspended_at } => {
+                EngineError::NamespaceSuspended { host: host.clone(), suspended_at: suspended_at.clone() }
+            }
+            _ => EngineError::Store(e),
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 //! [`Engine`], [`EngineBuilder`] and [`Answer`].
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -15,7 +15,7 @@ use crate::cache::{Cache, Parsed};
 use crate::check::{check_args, check_no_slice};
 use crate::clock::{Clock, SystemClock};
 use crate::error::{ConfigError, EngineError, EvalError, StoreError};
-use crate::eval::{is_instant, parse_stored, Done, Req};
+use crate::eval::{is_instant, parse_stored, Done, Req, Use};
 use crate::memo::Memo;
 use crate::runtime::Runtime;
 
@@ -365,33 +365,34 @@ impl Engine {
         check_args(cell, &desc).map_err(EngineError::Invalid)?;
         let id = cell.id();
         let store_err = |e: EvalError| match e {
-            EvalError::Store(e) => EngineError::Store(e),
+            EvalError::Store(e) => e.into(),
             other => EngineError::Runtime { cell_id: id.clone(), message: other.to_string() },
         };
-        // From the memo, without waiting for the evaluator.
-        if let Some(ans) = Req::new(self, a, now).memo_hit(&id, a).map_err(store_err)? {
-            return Ok(Answer::Receipt(ans.bytes.to_vec()));
-        }
-        let done = if desc.lang == STORED {
-            let start = self.memo.begin();
-            let mut req = Req::new(self, a, now);
-            match req.stored(cell, &id, a) {
-                Ok(d) => {
-                    self.memo.end(start, &req.learned);
-                    d
-                }
-                Err(e) => {
-                    self.memo.abort(start);
-                    return Err(store_err(e));
+        // From the memo (a value or a fault), without waiting for the evaluator.
+        let done = match Req::new(self, a, now).memo_done(&id, a).map_err(store_err)? {
+            Some(d) => d,
+            None if desc.lang == STORED => {
+                let start = self.memo.begin();
+                let mut req = Req::new(self, a, now);
+                match req.stored(cell, &id, a) {
+                    Ok(d) => {
+                        self.memo.end(start, &req.learned);
+                        d
+                    }
+                    Err(e) => {
+                        self.memo.abort(start);
+                        return Err(store_err(e));
+                    }
                 }
             }
-        } else {
-            let _single = self.evaluator.lock().unwrap_or_else(|p| p.into_inner());
-            self.evaluate_cell(cell, desc, a, now, false)?
+            None => {
+                let _single = self.evaluator.lock().unwrap_or_else(|p| p.into_inner());
+                self.evaluate_cell(cell, desc, a, now, false)?
+            }
         };
         Ok(match done {
             Done::Value(ans) => Answer::Receipt(ans.bytes.to_vec()),
-            Done::Fault(fault, _) => Answer::NotCovered { fault: Some(fault) },
+            Done::Fault(fa) => Answer::NotCovered { fault: Some(fa.fault) },
             Done::NotCovered | Done::Unsigned(..) => Answer::NOT_COVERED,
         })
     }
@@ -411,10 +412,10 @@ impl Engine {
         let mut req = Req::new(self, a, now);
         let result = (|| {
             if !unsigned {
-                if let Some(ans) =
-                    req.memo_hit(&cell.id(), &req.asof()).map_err(|e| crate::eval::engine_error(e, &cell.id()))?
+                if let Some(done) =
+                    req.memo_done(&cell.id(), &req.asof()).map_err(|e| crate::eval::engine_error(e, &cell.id()))?
                 {
-                    return Ok(Done::Value(ans));
+                    return Ok(done);
                 }
             }
             let done = req.run(cell.clone(), desc, unsigned)?;
@@ -455,12 +456,32 @@ impl Engine {
                 .map_err(|e| EngineError::Runtime { cell_id: cell.id(), message: e.to_string() })?
         } else {
             let _single = self.evaluator.lock().unwrap_or_else(|p| p.into_inner());
+            // Under a suspended mesh namespace (SPEC 9.9) nothing is signed: the cell is
+            // evaluated as `get` would, so a value needing a new receipt is none, and a
+            // receipt already signed (or one the store validates) gives its value.
+            let suspended = self.store.namespace(&self.host).map_err(|e| StoreError::new("namespace", e))?;
+            if suspended.is_some_and(|n| n.suspended_at.is_some()) {
+                match self.evaluate_cell(cell, desc, asof, &now, false)? {
+                    Done::Value(ans) => {
+                        let lineage: BTreeSet<String> = ans
+                            .inputs
+                            .iter()
+                            .map(|u| match u {
+                                Use::Cell { hash, .. } => hash.clone(),
+                                Use::Slice(s) => s.entry.clone(),
+                            })
+                            .collect();
+                        return Ok(Some(Evaluation::with_lineage(ans.value.clone(), lineage.into_iter().collect())));
+                    }
+                    _ => return Ok(None),
+                }
+            }
             self.evaluate_cell(cell, desc, asof, &now, true)?
         };
         Ok(match done {
             Done::Value(ans) => Some(Evaluation::new(ans.value.clone())),
             Done::Unsigned(v, lineage) => Some(Evaluation::with_lineage(v, lineage)),
-            Done::NotCovered | Done::Fault(..) => None,
+            Done::NotCovered | Done::Fault(_) => None,
         })
     }
 

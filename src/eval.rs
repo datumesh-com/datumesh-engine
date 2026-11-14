@@ -22,6 +22,7 @@ use crate::cache::Parsed;
 use crate::check::{check_args, valid_args};
 use crate::engine::{Engine, STORED};
 use crate::error::{EngineError, EvalError, StoreError};
+use crate::memo::Entry;
 use crate::runtime::{Budget, FnBinding, Input, Inputs, Member, SlicePattern};
 use crate::sign::receipt_json;
 use crate::slice::{cells_slice, extent_cells, spec_of, versions_slice, Spec};
@@ -80,26 +81,74 @@ pub(crate) enum Use {
     Slice(Arc<SliceRead>),
 }
 
+/// The ids of the cells read whose changes reach an answer through the dependents index:
+/// single cells and the members of slices over computed functions. (A slice over a stored
+/// function is matched by its pattern instead: [`input_patterns`].)
+fn input_deps(inputs: &[Use]) -> impl Iterator<Item = &String> {
+    inputs.iter().flat_map(|u| -> Box<dyn Iterator<Item = &String> + '_> {
+        match u {
+            Use::Cell { id, .. } => Box::new(std::iter::once(id)),
+            Use::Slice(s) if s.computed => Box::new(s.members.iter().map(|m| &m.id)),
+            Use::Slice(_) => Box::new(std::iter::empty()),
+        }
+    })
+}
+
+/// The slices over stored functions (and version slices) read.
+fn input_patterns(inputs: &[Use]) -> impl Iterator<Item = &Arc<Slice>> {
+    inputs.iter().filter_map(|u| match u {
+        Use::Slice(s) if !s.computed => Some(&s.slice),
+        _ => None,
+    })
+}
+
 impl Ans {
-    /// The ids of the cells read whose changes reach this answer through the dependents
-    /// index: single cells and the members of slices over computed functions. (A slice over a
-    /// stored function is matched by its pattern instead: [`Ans::patterns`].)
+    /// See [`input_deps`].
     pub(crate) fn deps(&self) -> impl Iterator<Item = &String> {
-        self.inputs.iter().flat_map(|u| -> Box<dyn Iterator<Item = &String> + '_> {
-            match u {
-                Use::Cell { id, .. } => Box::new(std::iter::once(id)),
-                Use::Slice(s) if s.computed => Box::new(s.members.iter().map(|m| &m.id)),
-                Use::Slice(_) => Box::new(std::iter::empty()),
-            }
-        })
+        input_deps(&self.inputs)
     }
 
-    /// The slices over stored functions (and version slices) it read.
+    /// See [`input_patterns`].
     pub(crate) fn patterns(&self) -> impl Iterator<Item = &Arc<Slice>> {
-        self.inputs.iter().filter_map(|u| match u {
-            Use::Slice(s) if !s.computed => Some(&s.slice),
-            _ => None,
-        })
+        input_patterns(&self.inputs)
+    }
+}
+
+/// A cell with no value because its evaluation faulted (SPEC 15.12). A fault is memoised as an
+/// answer is: it holds for the asofs `[lo, hi)`, and is dropped when a stored version it rests
+/// on is added. It has no receipt, so it is never stored.
+#[derive(Debug)]
+pub(crate) struct FaultAns {
+    /// The cell id.
+    pub(crate) id: String,
+    pub(crate) fault: Fault,
+    /// The instant the fault holds from: the latest of what the evaluation read and relied
+    /// on (as of the asof, for an asof-dependent fault).
+    pub(crate) known: String,
+    /// The fault holds for every asof in `[lo, hi)`, given the store as it was read and the
+    /// names in `names` resolving as recorded.
+    pub(crate) lo: String,
+    pub(crate) hi: Option<String>,
+    /// Every function name the fault depends on, transitively.
+    pub(crate) names: Arc<Names>,
+    /// The inputs that gave a value, as an answer's are.
+    pub(crate) inputs: Vec<Use>,
+    /// The inputs that faulted (their cell ids; their own dependencies are theirs).
+    pub(crate) faulted: Vec<String>,
+    /// Whether the memo may keep it.
+    pub(crate) memo: bool,
+}
+
+impl FaultAns {
+    /// The cell ids whose changes reach this fault through the dependents index (see
+    /// [`Ans::deps`]).
+    pub(crate) fn deps(&self) -> impl Iterator<Item = &String> {
+        self.faulted.iter().chain(input_deps(&self.inputs))
+    }
+
+    /// The slices over stored functions it read (see [`Ans::patterns`]).
+    pub(crate) fn patterns(&self) -> impl Iterator<Item = &Arc<Slice>> {
+        input_patterns(&self.inputs)
     }
 }
 
@@ -148,9 +197,10 @@ pub(crate) enum Done {
     Value(Arc<Ans>),
     /// No value as of the asof.
     NotCovered,
-    /// No value: the evaluation faulted; the fault holds from the instant given (the latest
-    /// asof of what the evaluation read, and of the bindings it relied on).
-    Fault(Fault, String),
+    /// No value: the evaluation faulted (SPEC 15.12), as a memoised answer: the fault and the
+    /// instant it holds from (the latest asof of what the evaluation read, and of the bindings
+    /// it relied on).
+    Fault(Arc<FaultAns>),
     /// The top cell evaluated without a receipt (`Resolver::evaluation`), with the entries
     /// it read.
     Unsigned(Scalar, Vec<String>),
@@ -243,13 +293,14 @@ pub(crate) struct Req<'e> {
     /// request: `None` when the store has no key document for the host, or one without.
     declarations: HashMap<String, Option<Arc<Declarations>>>,
     /// The answers this request made (not taken from the memo), inputs first: for the memo.
-    pub(crate) learned: Vec<Arc<Ans>>,
+    pub(crate) learned: Vec<Entry>,
     budget: Budget,
 }
 
 /// How an input of a version compares as of the asof.
 enum Check {
-    Same(Rd, (String, Option<String>), String),
+    /// The same: the read, the name it relied on (none for a pinned read) and its function hash.
+    Same(Rd, Option<(String, Option<String>)>, String),
     Pending(Vec<Pend>),
     Differs,
 }
@@ -385,8 +436,7 @@ impl<'e> Req<'e> {
         if let Some(d) = self.done_at(asof, id) {
             return Ok(Lookup::Ready(d.clone()));
         }
-        if let Some(a) = self.memo_hit(id, asof)? {
-            let d = Done::Value(a);
+        if let Some(d) = self.memo_done(id, asof)? {
             self.set_done(asof, id, d.clone());
             return Ok(Lookup::Ready(d));
         }
@@ -405,6 +455,23 @@ impl<'e> Req<'e> {
             return Ok(None);
         }
         Ok(Some(a))
+    }
+
+    /// A memoised fault holding at `asof` whose names still resolve as recorded.
+    fn memo_fault_hit(&mut self, id: &str, asof: &str) -> Result<Option<Arc<FaultAns>>, EvalError> {
+        let Some(f) = self.eng.memo.get_fault(id, asof) else { return Ok(None) };
+        if !self.names_hold(&f.names, asof)? {
+            return Ok(None);
+        }
+        Ok(Some(f))
+    }
+
+    /// The memoised answer of a cell as of `asof` (a value or a fault), if any.
+    pub(crate) fn memo_done(&mut self, id: &str, asof: &str) -> Result<Option<Done>, EvalError> {
+        if let Some(a) = self.memo_hit(id, asof)? {
+            return Ok(Some(Done::Value(a)));
+        }
+        Ok(self.memo_fault_hit(id, asof)?.map(Done::Fault))
     }
 
     /// The request's asof.
@@ -441,7 +508,7 @@ impl<'e> Req<'e> {
             inputs: Vec::new(),
             memo: true,
         });
-        self.learned.push(a.clone());
+        self.learned.push(Entry::Value(a.clone()));
         Ok(Done::Value(a))
     }
 
@@ -503,10 +570,13 @@ impl<'e> Req<'e> {
                     if let Some(f) = stack.pop() {
                         on_stack.remove(&key(&f.asof, &f.id));
                         match &d {
-                            Done::Value(a) => self.learned.push(a.clone()),
+                            Done::Value(a) => self.learned.push(Entry::Value(a.clone())),
                             // A member without a value ends a computed slice's read: the members
                             // after it (in key order) are not evaluated.
                             _ => {
+                                if let Done::Fault(fa) = &d {
+                                    self.learned.push(Entry::Fault(fa.clone()));
+                                }
                                 if let Some(parent) = stack.last_mut() {
                                     parent.pending.clear();
                                 }
@@ -547,7 +617,7 @@ impl<'e> Req<'e> {
         while let Some(u) = ans.inputs.get(*idx) {
             let check = match u {
                 Use::Cell { id, cell, hash, value, at } => {
-                    self.check_use(cell, id, hash, value, at.as_deref(), &asof)?
+                    self.check_use(cell, id, hash, value, at.as_deref(), &asof, &ans.asof)?
                 }
                 Use::Slice(old) => {
                     let old_members: Vec<(String, Scalar)> =
@@ -558,7 +628,9 @@ impl<'e> Req<'e> {
             match check {
                 Check::Same(rd, name, hash) => {
                     read.push(rd);
-                    names.insert(name, hash);
+                    if let Some(name) = name {
+                        names.insert(name, hash);
+                    }
                     *idx += 1;
                 }
                 Check::Pending(list) => return Ok(Step::Push(list)),
@@ -658,11 +730,17 @@ impl<'e> Req<'e> {
         let cand = cand.clone();
         let asof = f.asof.clone();
         while let Some(h) = cand.receipt.inputs().get(*idx) {
-            let check = if h.starts_with("slice:") { self.check_entry(h, &asof)? } else { self.check_input(h, &asof)? };
+            let check = if h.starts_with("slice:") {
+                self.check_entry(h, &asof)?
+            } else {
+                self.check_input(h, &asof, cand.receipt.asof())?
+            };
             match check {
                 Check::Same(rd, name, hash) => {
                     read.push(rd);
-                    names.insert(name, hash);
+                    if let Some(name) = name {
+                        names.insert(name, hash);
+                    }
                     *idx += 1;
                 }
                 Check::Pending(list) => return Ok(Step::Push(list)),
@@ -694,15 +772,20 @@ impl<'e> Req<'e> {
         ))))
     }
 
-    /// Whether input receipt `h` of a version still answers as of the asof.
-    fn check_input(&mut self, h: &str, asof: &str) -> Result<Check, EngineError> {
+    /// Whether input receipt `h` of a version made as of `reader` still answers as of the asof.
+    fn check_input(&mut self, h: &str, asof: &str, reader: &str) -> Result<Check, EngineError> {
         let Some(input) = self.receipt(h)? else { return Ok(Check::Differs) };
         let r = &input.receipt;
-        self.check_use(r.cell(), &r.cell().id(), h, r.value(), None, asof)
+        self.check_use(r.cell(), &r.cell().id(), h, r.value(), None, asof, reader)
     }
 
     /// Whether `cell`, its name resolving to its function, gives receipt `h` or value `value`
-    /// as of `at` (a transaction-time read), else as of `asof`.
+    /// as of `at` (a transaction-time read), else as of `asof`. `reader` is the asof of the
+    /// answer that read it. A read of a name resolved the name as of the reader's asof (the
+    /// binding then starts no later than it: see [`Req::binding_asof`]); a pinned read
+    /// (`read_pinned`, SPEC 16.3) did not, relies on no binding, and is checked by its hash
+    /// alone, with no name recorded.
+    #[allow(clippy::too_many_arguments)]
     fn check_use(
         &mut self,
         cell: &Cell,
@@ -711,10 +794,27 @@ impl<'e> Req<'e> {
         value: &Scalar,
         at: Option<&str>,
         asof: &str,
+        reader: &str,
     ) -> Result<Check, EngineError> {
         let when = at.unwrap_or(asof).to_string();
         let name = cell.function_name();
-        if !self.resolves_to(&name, &when, &cell.fn_hash).map_err(|e| engine_error(e, id))? {
+        let fail = |e: EvalError| engine_error(e, id);
+        // Pinned: the name did not resolve to the hash as of the reader's asof. The binding
+        // current as of `when` answers for the reader's asof too when it began no later (no
+        // binding starts in between): the store is asked only otherwise.
+        let pinned = match at {
+            Some(_) => false,
+            None => {
+                let current = self.binding_ref(&name, &when).map_err(fail)?.clone();
+                let at_reader = match current {
+                    None => None,
+                    Some((bound, start)) if start.as_str() <= reader => Some(bound),
+                    Some(_) => self.resolve(&name, reader).map_err(fail)?,
+                };
+                at_reader.as_deref() != Some(cell.fn_hash.as_str())
+            }
+        };
+        if !pinned && !self.resolves_to(&name, &when, &cell.fn_hash).map_err(fail)? {
             return Ok(Check::Differs);
         }
         self.budget.work(1).map_err(|e| engine_error(e, id))?;
@@ -722,7 +822,7 @@ impl<'e> Req<'e> {
         match self.lookup(cell, id, desc, &when).map_err(|e| engine_error(e, id))? {
             Lookup::Ready(Done::Value(a)) if a.hash == h || &a.value == value => Ok(Check::Same(
                 Rd::Cell { ans: a, at: at.map(str::to_string) },
-                (name, at.map(str::to_string)),
+                (!pinned).then(|| (name, at.map(str::to_string))),
                 cell.fn_hash.clone(),
             )),
             Lookup::Ready(_) => Ok(Check::Differs),
@@ -787,7 +887,7 @@ impl<'e> Req<'e> {
             Some(o) => now.entry == entry || same_members(o, &now),
         };
         let fn_hash = slice.fn_hash().to_string();
-        Ok(if same { Check::Same(Rd::Slice(now), (name, None), fn_hash) } else { Check::Differs })
+        Ok(if same { Check::Same(Rd::Slice(now), Some((name, None)), fn_hash) } else { Check::Differs })
     }
 
     /// The slice `slice` of function `fn_name` (descriptor `desc`) as of `asof`: for a
@@ -823,8 +923,8 @@ impl<'e> Req<'e> {
                     let id = cell.id();
                     match self.lookup(&cell, &id, desc.clone(), asof)? {
                         Lookup::Ready(Done::Value(a)) => member_ans.push(a),
-                        Lookup::Ready(Done::Fault(_, known)) => {
-                            absent = Some(known);
+                        Lookup::Ready(Done::Fault(fa)) => {
+                            absent = Some(fa.known.clone());
                             break;
                         }
                         Lookup::Ready(_) => {
@@ -1048,9 +1148,24 @@ impl<'e> Req<'e> {
             future_seen: false,
             at_read: false,
             asof_read: false,
+            fault_deps: Vec::new(),
+            unmemo: false,
         };
         let result = rt.evaluate(&f.desc, &f.cell, &mut reader, &mut budget);
-        let Reader { read, names, stop, faulted, fault_known, compared, future_seen, at_read, asof_read, .. } = reader;
+        let Reader {
+            read,
+            names,
+            stop,
+            faulted,
+            fault_known,
+            compared,
+            future_seen,
+            at_read,
+            asof_read,
+            fault_deps,
+            unmemo,
+            ..
+        } = reader;
         let fail = |e: EvalError| engine_error(e, &f.id);
         // Exhaustion wins over anything the runtime made of it.
         if budget.is_exhausted() {
@@ -1065,9 +1180,13 @@ impl<'e> Req<'e> {
                 budget.finish_attempt();
                 // The times come before the cells (SPEC 15.13): E_FORMULA_FUTURE the runtime
                 // established (a time found after the asof) stands over an input without a
-                // value. Either way the cell has no value; this is which code it reports.
+                // value. Either way the cell has no value; this is which code it reports. Not
+                // memoised: the input without a value has no memo entry to follow.
                 if matches!(result, Err(EvalError::Fault(Fault::Future))) && (future_seen || asof_read) {
-                    return Ok(Step::Done(Done::Fault(Fault::Future, f.asof.clone())));
+                    let read: Vec<Rd> = read.into_values().collect();
+                    let facts = self.facts(&read, names);
+                    let fa = self.fault_answer(f, facts, &fault_deps, Fault::Future, None, false)?;
+                    return Ok(Step::Done(Done::Fault(fa)));
                 }
                 return Ok(Step::Done(Done::NotCovered));
             }
@@ -1079,15 +1198,14 @@ impl<'e> Req<'e> {
         let value = match result {
             Ok(v) => v,
             Err(EvalError::Fault(code)) => {
-                // Where the fault holds from: as a receipt's asof would be, had it a value.
+                // Where the fault holds from: as a receipt's asof would be, had it a value. A
+                // fault a read returned (caught or not) is a cell's: memoised as its own.
                 let facts = self.facts(&read, names);
-                let latest = facts.latest.max(fault_known).max(compared.clone());
-                let known = if declared || asof_read {
-                    f.asof.clone()
-                } else {
-                    self.binding_asof(latest, &facts.names, &f.asof).map_err(fail)?
-                };
-                return Ok(Step::Done(Done::Fault(code, known)));
+                let latest = facts.latest.clone().max(fault_known).max(compared);
+                let memo = !unmemo && !at_read;
+                let latest = (!(declared || asof_read)).then_some(latest);
+                let fa = self.fault_answer(f, facts, &fault_deps, code, latest.as_deref(), memo)?;
+                return Ok(Step::Done(Done::Fault(fa)));
             }
             Err(EvalError::Suspended | EvalError::InputNotCovered { .. }) => {
                 return Err(EngineError::Runtime {
@@ -1131,6 +1249,61 @@ impl<'e> Req<'e> {
         };
         let ans = self.answer_with(f, cand, value, &read, names, how)?;
         Ok(Step::Done(Done::Value(ans)))
+    }
+
+    /// The answer of a faulted cell (SPEC 15.12) for frame `f`: the fault, which holds from
+    /// the instant its receipt's asof would have, and rests on what the evaluation read
+    /// (`facts`) and on the faulted cells `deps` and their names. `latest` is the latest
+    /// instant of what it read and relied on, from which the instant is found; `None` for a
+    /// fault asof-dependent (16.7), which holds as of the frame's asof only. Kept by the memo
+    /// when `memo` and nothing it rests on says otherwise.
+    fn fault_answer(
+        &mut self,
+        f: &Frame,
+        mut facts: Facts,
+        deps: &[Arc<FaultAns>],
+        fault: Fault,
+        latest: Option<&str>,
+        memo: bool,
+    ) -> Result<Arc<FaultAns>, EngineError> {
+        let mut faulted = Vec::with_capacity(deps.len());
+        for d in deps {
+            facts.memo &= d.memo;
+            if let Some(h) = &d.hi {
+                if facts.hi.as_ref().is_none_or(|x| h < x) {
+                    facts.hi = Some(h.clone());
+                }
+            }
+            if d.names.keys().any(|k| !facts.names.contains_key(k)) {
+                let m = Arc::make_mut(&mut facts.names);
+                for (k, v) in d.names.iter() {
+                    m.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+            }
+            faulted.push(d.id.clone());
+        }
+        let (known, lo, hi) = match latest {
+            None => (f.asof.clone(), f.asof.clone(), Some(just_after(&f.asof))),
+            Some(latest) => {
+                let tx = facts.tx.clone().unwrap_or_else(|| MIN_INSTANT.to_string());
+                let known = self
+                    .binding_asof(latest.to_string(), &facts.names, &f.asof)
+                    .map_err(|e| engine_error(e, &f.id))?
+                    .max(tx);
+                (known.clone(), known, facts.hi.clone())
+            }
+        };
+        Ok(Arc::new(FaultAns {
+            id: f.id.clone(),
+            fault,
+            known,
+            lo,
+            hi,
+            names: facts.names,
+            inputs: facts.inputs,
+            faulted,
+            memo: memo && facts.memo,
+        }))
     }
 
     /// The answer for frame `f`'s cell, evaluated to `value` from `read`: the version that
@@ -1403,6 +1576,15 @@ impl<'e> Req<'e> {
     /// Writes the request's new manifests, receipts and computed versions: manifests and
     /// receipts first (inputs before the receipts reading them), then the versions.
     pub(crate) fn flush(&mut self) -> Result<(), EngineError> {
+        // Nothing is written when a receipt would be (SPEC 9.9): the store refuses the receipts
+        // under a suspended namespace, and the manifests (not refused) are not written before.
+        if !self.fresh.is_empty() {
+            if let Some(ns) = self.eng.store.namespace(&self.eng.host).map_err(|e| StoreError::new("namespace", e))? {
+                if let Some(since) = ns.suspended_at {
+                    return Err(EngineError::NamespaceSuspended { host: self.eng.host.clone(), suspended_at: since });
+                }
+            }
+        }
         for m in self.manifests.values() {
             self.eng.store.put_manifest(m).map_err(|e| StoreError::new("put_manifest", e))?;
         }
@@ -1471,14 +1653,24 @@ struct Reader<'r, 'e> {
     at_read: bool,
     /// The asof was read.
     asof_read: bool,
+    /// The faulted cells read, whose faults the answer rests on.
+    fault_deps: Vec<Arc<FaultAns>>,
+    /// A fault rests on something that is not a cell's fault (an absent slice member, which
+    /// has no memo entry of its own): not memoised.
+    unmemo: bool,
 }
 
 impl Reader<'_, '_> {
-    /// A read returned a fault that holds from `known` on.
-    fn fault(&mut self, known: &str) {
+    /// A read returned a fault that holds from `known` on: the faulted cell `dep`, or none
+    /// when the fault is not a cell's (then the answer is not memoised).
+    fn fault(&mut self, known: &str, dep: Option<Arc<FaultAns>>) {
         self.faulted = true;
         if known > self.fault_known.as_str() {
             self.fault_known = known.to_string();
+        }
+        match dep {
+            Some(d) => self.fault_deps.push(d),
+            None => self.unmemo = true,
         }
     }
 
@@ -1497,6 +1689,20 @@ impl Reader<'_, '_> {
         Ok(())
     }
 
+    /// The descriptor stored under `fn_hash`: a hash with none is a store failure.
+    fn descriptor_for(&self, fn_hash: &str) -> Result<Arc<FunctionDescriptor>, EvalError> {
+        match self.req.eng.descriptor_of(fn_hash) {
+            Ok(Some(d)) => Ok(d),
+            Ok(None) => Err(EvalError::Store(StoreError::new(
+                "descriptor",
+                datumesh_store::Error::NotFound { what: "descriptor", key: fn_hash.to_string() },
+            ))),
+            Err(EngineError::Store(e)) => Err(EvalError::Store(e)),
+            Err(EngineError::Invalid(e)) => Err(EvalError::InvalidInput(e)),
+            Err(e) => Err(EvalError::Runtime(e.to_string())),
+        }
+    }
+
     /// The function `fn_name` means as of `at`, recorded as relied on (`key_at`: the
     /// transaction time it is read at, none for the evaluation's asof).
     fn function(
@@ -1509,18 +1715,7 @@ impl Reader<'_, '_> {
             return Err(EvalError::NameUnresolved { fn_name: fn_name.to_string(), asof: at.to_string() });
         };
         self.names.insert((fn_name.to_string(), key_at.map(str::to_string)), fn_hash.clone());
-        let desc = match self.req.eng.descriptor_of(&fn_hash) {
-            Ok(Some(d)) => d,
-            Ok(None) => {
-                return Err(EvalError::Store(StoreError::new(
-                    "descriptor",
-                    datumesh_store::Error::NotFound { what: "descriptor", key: fn_hash },
-                )))
-            }
-            Err(EngineError::Store(e)) => return Err(EvalError::Store(e)),
-            Err(EngineError::Invalid(e)) => return Err(EvalError::InvalidInput(e)),
-            Err(e) => return Err(EvalError::Runtime(e.to_string())),
-        };
+        let desc = self.descriptor_for(&fn_hash)?;
         Ok((fn_hash, desc))
     }
 
@@ -1530,8 +1725,26 @@ impl Reader<'_, '_> {
         self.declared(fn_name)?;
         let when = at.unwrap_or(&self.asof).to_string();
         let (fn_hash, desc) = self.function(fn_name, &when, at)?;
-        let (ns, f) = fn_name.rsplit_once('/').unwrap_or(("", fn_name));
-        let cell = Cell { ns: ns.to_string(), fn_name: f.to_string(), fn_hash, args: args.clone() };
+        let cell = cell_named(fn_name, fn_hash, args);
+        self.cell_read(cell, desc, at)
+    }
+
+    /// A pinned read (SPEC 16.3 `super`): the cell of `fn_name` at `fn_hash`, with the
+    /// descriptor stored under that hash, as of the evaluation's asof. The name is not resolved
+    /// and no binding is recorded: the receipt is an input as any read's is.
+    fn read_pinned_at(&mut self, fn_name: &str, fn_hash: &str, args: &Args) -> Result<Input, EvalError> {
+        self.budget.charge_shared(1)?;
+        self.declared(fn_name)?;
+        let desc = self.descriptor_for(fn_hash)?;
+        let cell = cell_named(fn_name, fn_hash.to_string(), args);
+        self.cell_read(cell, desc, None)
+    }
+
+    /// Reads `cell` (its descriptor `desc`) as of the evaluation's asof, or as of `at`: a value
+    /// is an input, a fault is returned (and recorded), a cell with no value or one to evaluate
+    /// stops the run.
+    fn cell_read(&mut self, cell: Cell, desc: Arc<FunctionDescriptor>, at: Option<&str>) -> Result<Input, EvalError> {
+        let when = at.unwrap_or(&self.asof).to_string();
         if let Some((k, _)) = cell.args.iter().find(|(_, a)| a.scalar().is_none()) {
             return Err(EvalError::InvalidInput(CoreError::new(
                 ErrorCode::Slice,
@@ -1551,9 +1764,10 @@ impl Reader<'_, '_> {
                 self.read.insert((a.hash.clone(), at.clone()), Rd::Cell { ans: a, at });
                 Ok(input)
             }
-            Lookup::Ready(Done::Fault(code, known)) => {
-                self.fault(&known);
-                Err(EvalError::Fault(code))
+            Lookup::Ready(Done::Fault(fa)) => {
+                let known = fa.known.clone();
+                self.fault(&known, Some(fa.clone()));
+                Err(EvalError::Fault(fa.fault))
             }
             Lookup::Ready(Done::NotCovered | Done::Unsigned(..)) => {
                 self.stop = Some(Stop::NotCovered);
@@ -1586,7 +1800,7 @@ impl Reader<'_, '_> {
                 Err(EvalError::Suspended)
             }
             SliceOutcome::Absent(known) => {
-                self.fault(&known);
+                self.fault(&known, None);
                 Err(EvalError::Fault(Fault::Absent))
             }
         }
@@ -1646,8 +1860,11 @@ impl Inputs for Reader<'_, '_> {
     }
 
     fn read_pinned(&mut self, fn_name: &str, fn_hash: &str, args: &Args) -> Result<Input, EvalError> {
-        let _ = (fn_name, fn_hash, args);
-        todo!("pinned reads: IMPL-NOTES-0.4.2.md")
+        if let Some(e) = self.stopped() {
+            return Err(e);
+        }
+        let r = self.read_pinned_at(fn_name, fn_hash, args);
+        self.guard(r)
     }
 
     fn read_slice(&mut self, fn_name: &str, pattern: &SlicePattern) -> Result<Vec<Member>, EvalError> {
@@ -1783,6 +2000,12 @@ impl Inputs for Reader<'_, '_> {
     }
 }
 
+/// The cell `fn_name` (`ns/name`) at `fn_hash`, with `args`.
+fn cell_named(fn_name: &str, fn_hash: String, args: &Args) -> Cell {
+    let (ns, f) = fn_name.rsplit_once('/').unwrap_or(("", fn_name));
+    Cell { ns: ns.to_string(), fn_name: f.to_string(), fn_hash, args: args.clone() }
+}
+
 /// The request's error for an exhausted budget: its fuel, or its work.
 pub(crate) fn exhausted(b: &Budget) -> EngineError {
     match b.exhausted() {
@@ -1800,7 +2023,7 @@ pub(crate) fn engine_error(e: EvalError, cell_id: &str) -> EngineError {
         EvalError::DepthExceeded { limit } => EngineError::DepthExceeded { limit },
         EvalError::BudgetExceeded { fuel } => EngineError::BudgetExceeded { fuel },
         EvalError::NameUnresolved { fn_name, asof } => EngineError::NameUnresolved { fn_name, asof },
-        EvalError::Store(e) => EngineError::Store(e),
+        EvalError::Store(e) => e.into(),
         EvalError::InvalidInput(e) => EngineError::Invalid(e),
         EvalError::BlobUnavailable { sha256, reason } => EngineError::BlobUnavailable { sha256, reason },
         other => EngineError::Runtime { cell_id: cell_id.to_string(), message: other.to_string() },

@@ -122,6 +122,18 @@
 //! fault is signed, but its version is not kept for validation, nor in the memo: no receipt
 //! lists what the fault rested on.
 //!
+//! A fault is memoised as the cell's answer is (SPEC 15.12, since 0.4.2): the cell is evaluated
+//! once while nothing it read has changed, and a reader of a faulted cell is answered from the
+//! memo too. A fault that rests on an absent slice member or on an input with no value is not
+//! memoised.
+//!
+//! # Suspension
+//!
+//! A request that must sign a receipt under a suspended mesh namespace (SPEC 9.9) fails with
+//! [`EngineError::NamespaceSuspended`] before any write: nothing is signed or stored. Reads,
+//! verification and the receipts already stored go on, and [`datumesh_core::Resolver::evaluate`] gives no
+//! value where a new receipt would be needed. Since 0.4.2.
+//!
 //! # Asof-dependent functions
 //!
 //! A function whose value may change with the asof alone (SPEC 15.12: `asof()`, a bounded

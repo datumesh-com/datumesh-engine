@@ -33,7 +33,45 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use datumesh_core::{Receipt, Slice};
 
 use crate::engine::MemoStats;
-use crate::eval::{Ans, Use};
+use crate::eval::{Ans, FaultAns, Use};
+
+/// What a request learned and the memo may keep: a value, or a fault (SPEC 15.12, memoised as
+/// a value is). Learned inputs come before the answers reading them.
+#[derive(Clone, Debug)]
+pub(crate) enum Entry {
+    Value(Arc<Ans>),
+    Fault(Arc<FaultAns>),
+}
+
+impl Entry {
+    fn id(&self) -> &str {
+        match self {
+            Entry::Value(a) => &a.id,
+            Entry::Fault(f) => &f.id,
+        }
+    }
+
+    fn memo(&self) -> bool {
+        match self {
+            Entry::Value(a) => a.memo,
+            Entry::Fault(f) => f.memo,
+        }
+    }
+
+    fn deps(&self) -> Vec<&String> {
+        match self {
+            Entry::Value(a) => a.deps().collect(),
+            Entry::Fault(f) => f.deps().collect(),
+        }
+    }
+
+    fn patterns(&self) -> Vec<&Arc<Slice>> {
+        match self {
+            Entry::Value(a) => a.patterns().collect(),
+            Entry::Fault(f) => f.patterns().collect(),
+        }
+    }
+}
 
 pub(crate) struct Memo {
     capacity: usize,
@@ -47,6 +85,8 @@ type Readers = (Arc<Slice>, HashSet<String>);
 struct State {
     rev: u64,
     entries: HashMap<String, Vec<Arc<Ans>>>,
+    /// Faults (SPEC 15.12) held, by cell id: counted with the answers in `count`.
+    faults: HashMap<String, Vec<Arc<FaultAns>>>,
     count: usize,
     /// Answers dropped by an invalidation, kept as candidates to recheck (from memory) before
     /// the store's version is looked at.
@@ -95,6 +135,19 @@ impl Memo {
             .cloned()
     }
 
+    /// A fault for `cell_id` holding at `asof` (its names still to be checked).
+    pub(crate) fn get_fault(&self, cell_id: &str, asof: &str) -> Option<Arc<FaultAns>> {
+        if !self.enabled() {
+            return None;
+        }
+        let s = self.lock();
+        s.faults
+            .get(cell_id)?
+            .iter()
+            .find(|f| f.lo.as_str() <= asof && f.hi.as_deref().is_none_or(|h| asof < h))
+            .cloned()
+    }
+
     /// A dropped answer for `cell_id` that held at `asof` before it was dropped.
     pub(crate) fn stale(&self, cell_id: &str, asof: &str) -> Option<Arc<Ans>> {
         if !self.enabled() {
@@ -116,19 +169,25 @@ impl Memo {
         rev
     }
 
-    /// Ends an evaluation begun at `start`, keeping `answers` (inputs before their readers)
+    /// Ends an evaluation begun at `start`, keeping `learned` (inputs before their readers)
     /// unless something they depend on was marked dirty since.
-    pub(crate) fn end(&self, start: u64, answers: &[Arc<Ans>]) {
+    pub(crate) fn end(&self, start: u64, learned: &[Entry]) {
         let mut s = self.lock();
         if self.enabled() {
-            for a in answers {
-                if !a.memo {
+            for e in learned {
+                if !e.memo() {
                     continue;
                 }
-                let mut mark = std::iter::once(&a.id).chain(a.deps()).filter_map(|c| s.dirty.get(c)).max().copied();
+                let deps = e.deps();
+                let patterns = e.patterns();
+                let mut mark = std::iter::once(e.id())
+                    .chain(deps.iter().map(|d| d.as_str()))
+                    .filter_map(|c| s.dirty.get(c))
+                    .max()
+                    .copied();
                 // A version added since, of a cell one of its slices contains.
                 for (rev, r) in s.added.iter().filter(|(rev, _)| *rev > start) {
-                    let hit = a.patterns().any(|p| match r {
+                    let hit = patterns.iter().any(|p| match r {
                         Some(r) => p.fn_hash() == r.cell().fn_hash && p.contains(r),
                         None => true,
                     });
@@ -137,11 +196,11 @@ impl Memo {
                     }
                 }
                 if let Some(m) = mark.filter(|m| *m > start) {
-                    let d = s.dirty.entry(a.id.clone()).or_default();
+                    let d = s.dirty.entry(e.id().to_string()).or_default();
                     *d = (*d).max(m);
                     continue;
                 }
-                s.insert(a.clone(), self.capacity);
+                s.insert(e.clone(), self.capacity);
             }
         }
         s.finish(start);
@@ -210,6 +269,10 @@ impl Memo {
                 s.stale_count += list.len();
                 s.stale.entry(c.clone()).or_default().extend(list);
             }
+            // A fault is dropped, not kept to recheck: it has no receipt to validate.
+            if let Some(list) = s.faults.remove(&c) {
+                s.count -= list.len();
+            }
             if let Some(readers) = s.readers.remove(&c) {
                 s.edges -= readers.len();
                 queue.extend(readers);
@@ -222,6 +285,7 @@ impl Memo {
         let mut s = self.lock();
         s.rev += 1;
         s.entries.clear();
+        s.faults.clear();
         s.readers.clear();
         s.stale.clear();
         s.patterns.clear();
@@ -234,6 +298,18 @@ impl Memo {
     pub(crate) fn stats(&self) -> MemoStats {
         let s = self.lock();
         let mut bytes = 0usize;
+        for (id, list) in &s.faults {
+            bytes += id.len() + 48;
+            for f in list {
+                bytes += std::mem::size_of::<FaultAns>()
+                    + f.id.len()
+                    + f.known.len()
+                    + f.lo.len()
+                    + f.hi.as_ref().map_or(0, String::len)
+                    + f.faulted.iter().map(|c| c.len() + 32).sum::<usize>()
+                    + f.names.len() * 64;
+            }
+        }
         for (id, list) in &s.entries {
             bytes += id.len() + 48;
             for a in list {
@@ -274,11 +350,12 @@ impl Memo {
             .flat_map(HashMap::values)
             .map(|(p, r)| p.canonical().len() + r.len() * 80 + 120)
             .sum::<usize>();
+        let fault_cells = s.faults.keys().filter(|k| !s.entries.contains_key(*k)).count();
         MemoStats {
             slice_patterns: s.pattern_count,
             stale: s.stale_count,
             entries: s.count,
-            cells: s.entries.len(),
+            cells: s.entries.len() + fault_cells,
             dependent_edges: s.edges,
             dirty: s.dirty.len(),
             approx_bytes: bytes,
@@ -287,17 +364,28 @@ impl Memo {
 }
 
 impl State {
-    fn insert(&mut self, a: Arc<Ans>, capacity: usize) {
-        if let Some(list) = self.entries.get(&a.id) {
-            if list.iter().any(|x| x.hash == a.hash && x.lo == a.lo && x.hi == a.hi) {
-                return;
-            }
+    fn insert(&mut self, e: Entry, capacity: usize) {
+        let held = match &e {
+            Entry::Value(a) => self
+                .entries
+                .get(&a.id)
+                .is_some_and(|list| list.iter().any(|x| x.hash == a.hash && x.lo == a.lo && x.hi == a.hi)),
+            Entry::Fault(f) => self
+                .faults
+                .get(&f.id)
+                .is_some_and(|list| list.iter().any(|x| x.fault == f.fault && x.lo == f.lo && x.hi == f.hi)),
+        };
+        if held {
+            return;
         }
-        if let Some(old) = self.stale.remove(&a.id) {
-            self.stale_count -= old.len();
+        if let Entry::Value(a) = &e {
+            if let Some(old) = self.stale.remove(&a.id) {
+                self.stale_count -= old.len();
+            }
         }
         if self.count + self.stale_count >= capacity {
             self.entries.clear();
+            self.faults.clear();
             self.readers.clear();
             self.stale.clear();
             self.patterns.clear();
@@ -306,19 +394,23 @@ impl State {
             self.stale_count = 0;
             self.edges = 0;
         }
-        for d in a.deps() {
-            if self.readers.entry(d.clone()).or_default().insert(a.id.clone()) {
+        let id = e.id().to_string();
+        for d in e.deps() {
+            if self.readers.entry(d.clone()).or_default().insert(id.clone()) {
                 self.edges += 1;
             }
         }
-        for p in a.patterns() {
+        for p in e.patterns() {
             let by_id = self.patterns.entry(p.fn_hash().to_string()).or_default();
             if !by_id.contains_key(p.id()) {
                 self.pattern_count += 1;
             }
-            by_id.entry(p.id().to_string()).or_insert_with(|| (p.clone(), HashSet::new())).1.insert(a.id.clone());
+            by_id.entry(p.id().to_string()).or_insert_with(|| (p.clone(), HashSet::new())).1.insert(id.clone());
         }
-        self.entries.entry(a.id.clone()).or_default().push(a);
+        match e {
+            Entry::Value(a) => self.entries.entry(a.id.clone()).or_default().push(a),
+            Entry::Fault(f) => self.faults.entry(f.id.clone()).or_default().push(f),
+        }
         self.count += 1;
     }
 

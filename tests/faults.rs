@@ -50,7 +50,8 @@ fn a_fault_is_not_covered_with_its_code_and_stores_nothing() {
     // The reader faults with the same code; nothing is stored for either.
     assert_eq!(e.get(&w.cellref(READER, &[]), Some(&t(20, 0))).unwrap(), faulted(Fault::DivZero));
     assert_eq!(rows(&w), before, "no receipt, no version, no manifest");
-    assert_eq!(e.memo_stats().entries, 1, "only the stored input's answer");
+    // The stored input's answer, and the two faults: memoised as the cell's (SPEC 15.12, 0.4.2).
+    assert_eq!(e.memo_stats().entries, 3, "the stored input's answer and the two faults");
     // As a resolver: no value.
     assert_eq!(e.evaluate(&w.cell(INV, &[]), &t(20, 0)), None);
     // Every fault code passes through as itself.

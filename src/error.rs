@@ -258,6 +258,17 @@ pub enum EngineError {
         /// Why (never one of the reasons that give a licence).
         reason: datumesh_core::LicenceReason,
     },
+    /// A write the engine makes is under a suspended namespace (SPEC 9.9, store 0.4.1): the
+    /// store refused it with [`datumesh_store::Error::NamespaceSuspended`], as the mesh's own
+    /// namespace (the signer of its computed receipts) is suspended. Nothing was signed or
+    /// stored for the request; reads, verification and the receipts already stored go on.
+    /// Since 0.4.2.
+    NamespaceSuspended {
+        /// The suspended host.
+        host: String,
+        /// When it was suspended (an instant).
+        suspended_at: String,
+    },
     /// A computed receipt could not be signed: the core refused its members. In practice an
     /// input whose `asof` is later than the engine's clock (`E_TIME_ORDER`: `asof <= issued`).
     /// Added to the brief's list.
@@ -287,6 +298,9 @@ impl fmt::Display for EngineError {
             }
             EngineError::Unlicensed { cell_id, reason } => {
                 write!(f, "licence inheritance refuses to compute cell {cell_id}: {reason}; nothing was stored")
+            }
+            EngineError::NamespaceSuspended { host, suspended_at } => {
+                write!(f, "the namespace {host} is suspended since {suspended_at}; nothing was signed or stored")
             }
             EngineError::Invalid(e) => write!(f, "invalid request: {e}"),
             EngineError::Sign(e) => write!(f, "cannot sign the computed receipt: {e}"),

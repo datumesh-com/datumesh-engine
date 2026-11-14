@@ -184,6 +184,25 @@ pub trait Inputs {
     /// the evaluation's asof is `E_FORMULA_FUTURE`. Costs 1 + versions.
     fn read_versions(&mut self, fn_name: &str, args: &Args, from: &str, to: &str) -> Result<Vec<Input>, EvalError>;
 
+    /// The cell of the function `fn_name` **at the function hash** `fn_hash`, with `args`, as
+    /// of the evaluation's asof: `P/m@<fn_hash>(...)` (SPEC 16.3 `super`). The cell is
+    /// evaluated with the descriptor stored under `fn_hash` and relies on no binding: the
+    /// name is not resolved, so no binding start is a candidate for the receipt's `asof` and
+    /// a later rebinding of `fn_name` does not change the answer. Otherwise it is an
+    /// ordinary read ([`read_cell`](Inputs::read_cell)): the receipt becomes an `inputs`
+    /// entry, an evaluation is suspended and restarted, a fault is returned, and it costs 1.
+    /// `fn_name` must be declared in the descriptor's `inputs` ([`EvalError::UndeclaredInput`]);
+    /// a `fn_hash` with no stored descriptor is a store failure ([`EvalError::Store`],
+    /// `NotFound`). Since 0.4.2.
+    ///
+    /// Provided: [`EvalError::Runtime`] (an `Inputs` with no pinned reads to offer; the
+    /// engine's inputs override it). Being a provided method of a trait implemented by the
+    /// engine and by runtimes' test doubles, it adds no obligation to an implementor.
+    fn read_pinned(&mut self, fn_name: &str, fn_hash: &str, args: &Args) -> Result<Input, EvalError> {
+        let _ = (fn_name, fn_hash, args);
+        Err(EvalError::Runtime("these inputs offer no pinned reads".into()))
+    }
+
     /// The binding of `fn_name` as of the evaluation's asof, or as of `at`: its function hash,
     /// when it began and the descriptor; `None` when it has none then. Relied on as a read's
     /// name is. Free.

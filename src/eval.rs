@@ -1645,6 +1645,11 @@ impl Inputs for Reader<'_, '_> {
         self.guard(r)
     }
 
+    fn read_pinned(&mut self, fn_name: &str, fn_hash: &str, args: &Args) -> Result<Input, EvalError> {
+        let _ = (fn_name, fn_hash, args);
+        todo!("pinned reads: IMPL-NOTES-0.4.2.md")
+    }
+
     fn read_slice(&mut self, fn_name: &str, pattern: &SlicePattern) -> Result<Vec<Member>, EvalError> {
         if let Some(e) = self.stopped() {
             return Err(e);

@@ -2,6 +2,62 @@
 
 All notable changes to `datumesh-engine`.
 
+## 0.5.0 (unreleased)
+
+Build 2 Part 3 of the engine: scenarios (`whatif`), the solver, cycle paths, and deep recursion
+that splits itself (Build 2 E1-E4). On `datumesh-store` 0.5.0 (was 0.4.1; the store adds only).
+Breaking (`API-CHANGES-0.5.0.md`): `EngineError::Cycle` and `EvalError::Cycle` carry `path`
+instead of `cell_id`.
+
+### Added
+
+- `Engine::whatif(cell, asof, &Overrides, Option<&Solve>) -> Result<ScenarioAnswer, EngineError>`
+  (E1): the value of a cell as of an asof with value overrides and stored-slice overrides in
+  place. The overridden cells answer their values; a cell that does not depend on the overrides
+  answers from the memo and the store as `get` would; a dependent one is evaluated in the
+  request's scope. Nothing is written: no receipt, computed version, global memo entry or
+  signature. The answer is labelled a scenario (`ScenarioAnswer`, no receipt).
+- `Overrides` (`value`, `slice`; at most 64, validated per SPEC 5.9), `ScenarioAnswer`,
+  `ScenarioOverride` (`Value`, `Slice`, with `id()`).
+- `Solve::new(vary, target, equals, lo, hi)` (E2): bisection of a number cell over `[lo, hi]`
+  until `|target - equals|` or the interval is within 1e-12 relative. The value found is
+  rounded half-even to 15 significant digits: solve values carry 15 significant digits. The
+  bisection runs on binary doubles (the engine has no decimal type), and 15 digits are what a
+  double holds deterministically. The answer is the requested cell's value under the solved
+  `vary` (the target's, when the requested cell is the target).
+  Fuel exhaustion or no sign change is `E_WHATIF_NO_SOLUTION`.
+- `EngineError::Override(String)` (the code: `E_CANON_TYPE`, `E_CANON_ARG_DUPLICATE`,
+  `E_SLICE_MEMBER`, `E_CANON_LIMIT`), `EngineError::NotCovered { fault }` (a scenario's cell
+  with no value, or a fault in scope), `EngineError::WhatifNoSolution`.
+
+### Changed
+
+- A cycle names its path (E3): `EngineError::Cycle { path }`, the canonical calls in read order,
+  from the cell that reappeared to its second occurrence (`<ns>/<fn>(<label>: <literal>, ...)`).
+- Deep recursion splits itself (E4): an evaluation that would pass the depth limit (default
+  10,000, unchanged) evaluates the deepest pending cell first as a root of its own, within the
+  same request, and then runs the outer cell again, which finds the answers in the request. The
+  answer and its receipts are those of a shallow evaluation. Fuel and work limits still bound it.
+  `EngineError::DepthExceeded` is no longer raised by evaluation.
+
+### Dependencies
+
+- `datumesh-store` 0.5.0 (was 0.4.1). A local development `[patch]` of it is in the
+  git-ignored `.cargo/config.toml`; the lock needs the registry release.
+
+### Tests
+
+- `tests/recursion.rs`: `a_cell_reappearing_on_the_stack_is_a_cycle` matches the path;
+  `the_depth_limit_is_enforced` is `the_depth_limit_splits_a_deep_chain_with_the_same_answer`
+  (success, the same receipt as the default limit); new `an_unbounded_recursion_is_stopped_by_its_fuel_and_work_limits`.
+  Coordinator-approved, as the test writer noted.
+- `tests/slices.rs`: the loop cycle asserts its path (`SUM(), LOOP(n: 2), SUM()`).
+- `tests/whatif.rs` `a_scenario_writes_nothing`: the final assertion compared a warm engine with
+  the cold snapshot (the test compared a warm engine with the cold snapshot); it now compares
+  against the warm snapshot.
+- `tests/solver.rs`: the rounding test pins 15 significant digits; new test for the requested
+  cell's value under the solved `vary`.
+
 ## 0.4.2 (unreleased)
 
 For spec-0.5.0: suspension (SPEC 9.9), faults memoised (SPEC 15.12, formula finding H9),

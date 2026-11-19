@@ -101,7 +101,14 @@ fn the_path_shows_the_argument_types_the_fixes_depend_on() {
     });
     let e = w.engine();
     let p = path_of(e.get(&w.cellref("calc.example.net/dd", &[("d", date("2024-03-10"))]), None));
-    assert_eq!(p, vec!["calc.example.net/dd(d: 2024-03-10)", "calc.example.net/de(d: 2024-03-10)", "calc.example.net/dd(d: 2024-03-10)"]);
+    assert_eq!(
+        p,
+        vec![
+            "calc.example.net/dd(d: 2024-03-10)",
+            "calc.example.net/de(d: 2024-03-10)",
+            "calc.example.net/dd(d: 2024-03-10)"
+        ]
+    );
     let p = path_of(e.get(&w.cellref("calc.example.net/ss", &[("s", text("a\"b"))]), None));
     assert_eq!(p, vec![r#"calc.example.net/ss(s: "a""b")"#, r#"calc.example.net/ss(s: "a""b")"#]);
     let p = path_of(e.get(&w.cellref("calc.example.net/two", &[("z", num("1.5")), ("a", date("2024-03-10"))]), None));
@@ -120,7 +127,11 @@ fn bind_native(
     body: &str,
     inputs: &[&str],
     at: &str,
-    f: impl Fn(&datumesh_core::Cell, &mut dyn datumesh_engine::Inputs, &mut datumesh_engine::Budget) -> Result<Scalar, datumesh_engine::EvalError>
+    f: impl Fn(
+            &datumesh_core::Cell,
+            &mut dyn datumesh_engine::Inputs,
+            &mut datumesh_engine::Budget,
+        ) -> Result<Scalar, datumesh_engine::EvalError>
         + Send
         + Sync
         + 'static,
@@ -145,7 +156,9 @@ fn feedback_world(rebound_reads_now: bool) -> (World, String, String) {
     } else {
         // a reads b as of T (before the rebind): b then read the old a.
         let at = t_before.clone();
-        bind_native(&w, A, "a1-asof", &[B], &rebind, move |_, i, _| Ok(add(&i.read_asof(B, &args(&[]), &at)?.value, &num("5"))));
+        bind_native(&w, A, "a1-asof", &[B], &rebind, move |_, i, _| {
+            Ok(add(&i.read_asof(B, &args(&[]), &at)?.value, &num("5")))
+        });
     }
     (w, t_before, rebind)
 }

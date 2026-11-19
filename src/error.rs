@@ -3,6 +3,8 @@
 //! (building an engine) and [`StoreError`] (a store failure, in the engine's words).
 
 use std::fmt;
+
+use datumesh_core::Fault;
 use std::sync::Arc;
 
 /// A store failure, as the engine reports it.
@@ -76,10 +78,11 @@ pub enum EvalError {
         /// The fully qualified name read.
         fn_name: String,
     },
-    /// The cell reappeared on the evaluation stack: it depends on itself.
+    /// The cell reappeared on the evaluation stack: it depends on itself. The path holds the
+    /// canonical calls in read order, from the cell that reappeared to its second occurrence.
     Cycle {
-        /// The cell's id.
-        cell_id: String,
+        /// The canonical calls of the cycle (SPEC 5.8), the first and last equal.
+        path: Vec<String>,
     },
     /// The evaluation stack reached the engine's depth limit.
     DepthExceeded {
@@ -146,7 +149,7 @@ impl fmt::Display for EvalError {
         match self {
             EvalError::NoRuntime { lang } => write!(f, "no runtime for language {lang}"),
             EvalError::UndeclaredInput { fn_name } => write!(f, "{fn_name} is not a declared input"),
-            EvalError::Cycle { cell_id } => write!(f, "cycle: cell {cell_id} depends on itself"),
+            EvalError::Cycle { path } => write!(f, "cycle: {}", path.join(" -> ")),
             EvalError::DepthExceeded { limit } => write!(f, "evaluation deeper than the limit of {limit}"),
             EvalError::BudgetExceeded { fuel } => write!(f, "evaluation needs more than its fuel of {fuel}"),
             EvalError::NameUnresolved { fn_name, asof } => write!(f, "{fn_name} has no binding as of {asof}"),
@@ -190,12 +193,14 @@ pub enum EngineError {
         /// The fully qualified name read.
         fn_name: String,
     },
-    /// A cell depends on itself.
+    /// A cell depends on itself. `path` holds the canonical calls of the cycle in read order,
+    /// starting at the cell that reappeared and ending with it again (Build 2 E3: since 0.5.0).
     Cycle {
-        /// The cell that reappeared on the evaluation stack.
-        cell_id: String,
+        /// The canonical calls of the cycle (SPEC 5.8).
+        path: Vec<String>,
     },
-    /// The evaluation stack reached the depth limit.
+    /// The evaluation stack reached the depth limit. Since 0.5.0 a deeper evaluation splits
+    /// itself instead (Build 2 E4), so this is not raised by the engine's evaluation.
     DepthExceeded {
         /// The limit.
         limit: usize,
@@ -273,6 +278,22 @@ pub enum EngineError {
     /// input whose `asof` is later than the engine's clock (`E_TIME_ORDER`: `asof <= issued`).
     /// Added to the brief's list.
     Sign(datumesh_core::Error),
+    /// A scenario's overrides are not valid (SPEC 5.9, Build 2 E1): the code is `E_CANON_TYPE`
+    /// (a value of another type than the cell's), `E_CANON_ARG_DUPLICATE` (a cell or slice
+    /// overridden twice), `E_SLICE_MEMBER` (a removed cell that is not in the slice, a cell
+    /// both added and removed, an added cell outside the slice or already in it) or
+    /// `E_CANON_LIMIT` (more than 64 overrides). Since 0.5.0.
+    Override(String),
+    /// A scenario's cell has no value, or a fault in its scope (`not_covered`): the fault if
+    /// any, as [`Answer::NotCovered`](crate::Answer::NotCovered). Since 0.5.0.
+    NotCovered {
+        /// The evaluation fault, if the cell has no value because of one.
+        fault: Option<Fault>,
+    },
+    /// A solve found no solution (`E_WHATIF_NO_SOLUTION`): no sign change over the interval,
+    /// or the request's fuel ran out before the bisection converged (never a partial answer).
+    /// Since 0.5.0.
+    WhatifNoSolution,
 }
 
 impl fmt::Display for EngineError {
@@ -282,7 +303,7 @@ impl fmt::Display for EngineError {
                 write!(f, "no runtime for language {lang} (function {fn_hash})")
             }
             EngineError::UndeclaredInput { fn_name } => write!(f, "{fn_name} is not a declared input"),
-            EngineError::Cycle { cell_id } => write!(f, "cycle: cell {cell_id} depends on itself"),
+            EngineError::Cycle { path } => write!(f, "cycle: {}", path.join(" -> ")),
             EngineError::DepthExceeded { limit } => write!(f, "evaluation deeper than the limit of {limit}"),
             EngineError::BudgetExceeded { fuel } => {
                 write!(f, "evaluation needs more than its fuel of {fuel}; nothing was stored")
@@ -304,6 +325,12 @@ impl fmt::Display for EngineError {
             }
             EngineError::Invalid(e) => write!(f, "invalid request: {e}"),
             EngineError::Sign(e) => write!(f, "cannot sign the computed receipt: {e}"),
+            EngineError::Override(code) => write!(f, "scenario override refused: {code}; nothing was computed"),
+            EngineError::NotCovered { fault: Some(fault) } => write!(f, "not covered in the scenario: {fault}"),
+            EngineError::NotCovered { fault: None } => f.write_str("not covered in the scenario"),
+            EngineError::WhatifNoSolution => {
+                f.write_str("E_WHATIF_NO_SOLUTION: no solution in the interval, or the fuel ran out")
+            }
         }
     }
 }

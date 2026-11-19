@@ -34,7 +34,7 @@ fn fnum(v: f64) -> Scalar {
 
 /// x stored (and never published: the solver overrides it); lin = 3x + 1; sq = x^2;
 /// cubic = x^3 + x; pos = x^2 + 1 (never zero). Closures use f64 (their values are decimal
-/// strings, bounded by the engine's 34-digit rounding).
+/// strings, bounded by the engine's 15-digit rounding of solve values).
 fn world() -> World {
     let mut w = World::new();
     w.stored_fn(X, &[]);
@@ -59,7 +59,14 @@ fn solve(w: &World, target: &str, equals: &str, lo: &str, hi: &str) -> Solve {
     Solve::new(w.cellref(X, &[]), w.cellref(target, &[]), num(equals), num(lo), num(hi))
 }
 
-fn run(w: &World, e: &Engine, target: &str, equals: &str, lo: &str, hi: &str) -> Result<datumesh_engine::ScenarioAnswer, EngineError> {
+fn run(
+    w: &World,
+    e: &Engine,
+    target: &str,
+    equals: &str,
+    lo: &str,
+    hi: &str,
+) -> Result<datumesh_engine::ScenarioAnswer, EngineError> {
     let c: CellRef = w.cellref(target, &[]);
     e.whatif(&c, None, &Overrides::new(), Some(&solve(w, target, equals, lo, hi)))
 }
@@ -114,14 +121,14 @@ fn bisection_finds_the_root_of_a_non_linear_function() {
 }
 
 #[test]
-fn the_solved_value_is_rounded_to_34_significant_digits() {
+fn the_solved_value_is_rounded_to_15_significant_digits() {
     let w = world();
     let e = w.engine();
     let a = run(&w, &e, SQ, "2", "0", "2").unwrap();
     let lex = solved(&a).1.lexical().to_string();
     let digits = lex.trim_start_matches('-').replace('.', "");
     let sig = digits.trim_start_matches('0');
-    assert!(sig.len() <= 34, "{lex}");
+    assert!(sig.len() <= 15, "{lex}");
     assert!(num(&lex) == solved(&a).1);
 }
 
@@ -165,4 +172,22 @@ fn the_solver_is_deterministic_and_writes_nothing() {
     assert_eq!(solved(&run(&w, &other, CUBIC, "10", "-10", "10").unwrap()), solved(&first));
     assert_eq!(rows(&w), [0, 0, 0, 0]);
     assert_eq!(e.memo_stats().entries, 0);
+}
+
+#[test]
+fn the_answer_is_the_requested_cells_value_under_the_solved_vary() {
+    let w = world();
+    let e = w.engine();
+    // The requested cell is the target: its value is `equals` under the solution.
+    let a = run(&w, &e, SQ, "2", "0", "2").unwrap();
+    assert_eq!(a.cell, w.cell(SQ, &[]));
+    assert!(tolerance_ok(&a.value, 2.0), "{:?}", a.value);
+    // The requested cell depends on vary but is not the target: LIN = 3x + 1 at the x where
+    // SQ = x^2 equals 2, i.e. at sqrt(2).
+    let c = w.cellref(LIN, &[]);
+    let a = e.whatif(&c, None, &Overrides::new(), Some(&solve(&w, SQ, "2", "0", "2"))).unwrap();
+    assert_eq!(a.cell, w.cell(LIN, &[]));
+    assert_eq!(a.ty, datumesh_core::Type::Number);
+    assert!((f(&a.value) - (3.0 * 2f64.sqrt() + 1.0)).abs() < 1e-9, "{:?}", a.value);
+    assert!((f(&solved(&a).1) - 2f64.sqrt()).abs() < 1e-9);
 }

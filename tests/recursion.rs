@@ -128,9 +128,15 @@ fn a_cell_reappearing_on_the_stack_is_a_cycle() {
     });
     let e = w.engine();
     for name in ["calc.example.net/f", "calc.example.net/g"] {
-        let cell = w.cell(name, &[("x", num("1"))]);
+        // The path starts at the cell that reappeared and ends with it (SPEC 5.8 calls).
+        let call = |f: &str| format!("{f}(x: 1)");
+        let want: Vec<String> = if name.ends_with("/f") {
+            vec![call(name), call(name)]
+        } else {
+            vec![call(name), call("calc.example.net/h"), call(name)]
+        };
         match e.get(&w.cellref(name, &[("x", num("1"))]), None) {
-            Err(EngineError::Cycle { cell_id }) => assert_eq!(cell_id, cell.id(), "{name}"),
+            Err(EngineError::Cycle { path }) => assert_eq!(path, want, "{name}"),
             other => panic!("{name}: {other:?}"),
         }
     }
@@ -138,20 +144,40 @@ fn a_cell_reappearing_on_the_stack_is_a_cycle() {
 }
 
 #[test]
-fn the_depth_limit_is_enforced() {
+fn the_depth_limit_splits_a_deep_chain_with_the_same_answer() {
+    // Since 0.5.0 a chain past the depth limit is not an error: the evaluation splits itself
+    // (Build 2 E4), and the answer is the one the default limit gives.
     let mut w = World::new();
     chain_world(&mut w);
     let shallow = w.engine_with(|b| b.depth_limit(100));
     let chain = |k: u32| w.cellref(CHAIN, &[("n", num(&k.to_string()))]);
-    // 100 frames: chain(99) .. chain(0) fit, chain(100) does not.
-    assert!(matches!(shallow.get(&chain(100), None), Err(EngineError::DepthExceeded { limit: 100 })));
-    assert_eq!(w.db().count("receipts"), 0, "nothing stored");
+    let deep = shallow.get(&chain(100), None).unwrap();
+    assert_eq!(receipt_of(&deep).value(), &num("100"));
     assert_eq!(receipt_of(&shallow.get(&chain(99), None).unwrap()).value(), &num("99"));
-    // The default limit is 10,000.
     let e = w.engine();
-    assert!(matches!(e.get(&chain(10_000), None), Err(EngineError::DepthExceeded { limit: 10_000 })));
+    assert_eq!(e.get(&chain(100), None).unwrap(), deep, "the same receipt under the default limit");
+    assert_eq!(receipt_of(&e.get(&chain(10_000), None).unwrap()).value(), &num("10000"));
     assert_eq!(receipt_of(&e.get(&chain(1_000), None).unwrap()).value(), &num("1000"));
     w.verify_all_issued(&e, "recursion_depth");
+}
+
+#[test]
+fn an_unbounded_recursion_is_stopped_by_its_fuel_and_work_limits() {
+    // forever(n) reads forever(n + 1): the split never meets a base case, so the request's
+    // fuel and work bound it, and nothing is stored.
+    const FOREVER: &str = "calc.example.net/forever";
+    let mut w = World::new();
+    w.native_fn(FOREVER, &[FOREVER], &[("n", N)], |c, i, _| {
+        let n = int(c.args["n"].scalar().unwrap());
+        i.read(FOREVER, &args(&[("n", num(&(n + 1).to_string()))]))
+    });
+    let r = w.cellref(FOREVER, &[("n", num("0"))]);
+    let poor = w.engine_with(|b| b.fuel(5_000));
+    assert!(matches!(poor.get(&r, None), Err(EngineError::BudgetExceeded { fuel: 5_000 })));
+    assert_eq!(w.db().count("receipts"), 0, "nothing stored");
+    let busy = w.engine_with(|b| b.work_limit(5_000));
+    assert!(matches!(busy.get(&r, None), Err(EngineError::WorkExceeded { limit: 5_000 })));
+    assert_eq!(w.db().count("receipts"), 0, "nothing stored");
 }
 
 #[test]

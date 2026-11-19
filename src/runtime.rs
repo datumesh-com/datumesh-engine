@@ -434,6 +434,12 @@ impl Budget {
         floor
     }
 
+    /// A suspended frame set aside (its stack split): its floor is no longer pending.
+    pub(crate) fn release(&self, floor: u64) {
+        let mut m = self.lock();
+        m.pending = m.pending.saturating_sub(floor);
+    }
+
     /// The running attempt completed: its fuel is the evaluation's.
     pub(crate) fn finish_attempt(&self) -> u64 {
         let mut m = self.lock();

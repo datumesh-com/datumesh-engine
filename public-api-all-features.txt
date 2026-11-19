@@ -54,7 +54,7 @@ pub datumesh_engine::EngineError::BlobUnavailable::sha256: alloc::string::String
 pub datumesh_engine::EngineError::BudgetExceeded
 pub datumesh_engine::EngineError::BudgetExceeded::fuel: u64
 pub datumesh_engine::EngineError::Cycle
-pub datumesh_engine::EngineError::Cycle::cell_id: alloc::string::String
+pub datumesh_engine::EngineError::Cycle::path: alloc::vec::Vec<alloc::string::String>
 pub datumesh_engine::EngineError::DepthExceeded
 pub datumesh_engine::EngineError::DepthExceeded::limit: usize
 pub datumesh_engine::EngineError::Invalid(datumesh_core::error::Error)
@@ -67,6 +67,9 @@ pub datumesh_engine::EngineError::NamespaceSuspended::suspended_at: alloc::strin
 pub datumesh_engine::EngineError::NoRuntime
 pub datumesh_engine::EngineError::NoRuntime::fn_hash: alloc::string::String
 pub datumesh_engine::EngineError::NoRuntime::lang: alloc::string::String
+pub datumesh_engine::EngineError::NotCovered
+pub datumesh_engine::EngineError::NotCovered::fault: core::option::Option<datumesh_core::envelope::Fault>
+pub datumesh_engine::EngineError::Override(alloc::string::String)
 pub datumesh_engine::EngineError::Runtime
 pub datumesh_engine::EngineError::Runtime::cell_id: alloc::string::String
 pub datumesh_engine::EngineError::Runtime::message: alloc::string::String
@@ -77,6 +80,7 @@ pub datumesh_engine::EngineError::UndeclaredInput::fn_name: alloc::string::Strin
 pub datumesh_engine::EngineError::Unlicensed
 pub datumesh_engine::EngineError::Unlicensed::cell_id: alloc::string::String
 pub datumesh_engine::EngineError::Unlicensed::reason: datumesh_core::licence::LicenceReason
+pub datumesh_engine::EngineError::WhatifNoSolution
 pub datumesh_engine::EngineError::WorkExceeded
 pub datumesh_engine::EngineError::WorkExceeded::limit: u64
 impl core::clone::Clone for datumesh_engine::EngineError
@@ -96,7 +100,7 @@ pub datumesh_engine::EvalError::BlobUnavailable::sha256: alloc::string::String
 pub datumesh_engine::EvalError::BudgetExceeded
 pub datumesh_engine::EvalError::BudgetExceeded::fuel: u64
 pub datumesh_engine::EvalError::Cycle
-pub datumesh_engine::EvalError::Cycle::cell_id: alloc::string::String
+pub datumesh_engine::EvalError::Cycle::path: alloc::vec::Vec<alloc::string::String>
 pub datumesh_engine::EvalError::DepthExceeded
 pub datumesh_engine::EvalError::DepthExceeded::limit: usize
 pub datumesh_engine::EvalError::Fault(datumesh_core::envelope::Fault)
@@ -135,6 +139,23 @@ pub fn datumesh_engine::Pattern::eq(&self, &Self) -> bool
 impl core::fmt::Debug for datumesh_engine::Pattern
 pub fn datumesh_engine::Pattern::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for datumesh_engine::Pattern
+#[non_exhaustive] pub enum datumesh_engine::ScenarioOverride
+pub datumesh_engine::ScenarioOverride::Slice
+pub datumesh_engine::ScenarioOverride::Slice::add: alloc::vec::Vec<(datumesh_core::model::Cell, datumesh_core::model::Scalar)>
+pub datumesh_engine::ScenarioOverride::Slice::remove: alloc::vec::Vec<datumesh_core::model::Cell>
+pub datumesh_engine::ScenarioOverride::Slice::slice: datumesh_core::model::Cell
+pub datumesh_engine::ScenarioOverride::Value
+pub datumesh_engine::ScenarioOverride::Value::cell: datumesh_core::model::Cell
+pub datumesh_engine::ScenarioOverride::Value::value: datumesh_core::model::Scalar
+impl datumesh_engine::ScenarioOverride
+pub fn datumesh_engine::ScenarioOverride::id(&self) -> alloc::string::String
+impl core::clone::Clone for datumesh_engine::ScenarioOverride
+pub fn datumesh_engine::ScenarioOverride::clone(&self) -> Self
+impl core::cmp::PartialEq for datumesh_engine::ScenarioOverride
+pub fn datumesh_engine::ScenarioOverride::eq(&self, &Self) -> bool
+impl core::fmt::Debug for datumesh_engine::ScenarioOverride
+pub fn datumesh_engine::ScenarioOverride::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for datumesh_engine::ScenarioOverride
 pub struct datumesh_engine::Budget
 impl datumesh_engine::Budget
 pub fn datumesh_engine::Budget::charge(&mut self, u64) -> core::result::Result<(), datumesh_engine::EvalError>
@@ -154,6 +175,8 @@ pub fn datumesh_engine::Engine::get_cell(&self, &datumesh_core::model::Cell, cor
 pub fn datumesh_engine::Engine::memo_stats(&self) -> datumesh_engine::MemoStats
 pub fn datumesh_engine::Engine::resolve(&self, &datumesh_core::model::CellRef, core::option::Option<&str>) -> core::result::Result<core::option::Option<datumesh_core::model::Cell>, datumesh_engine::EngineError>
 pub fn datumesh_engine::Engine::stored_version_added(&self, &str)
+impl datumesh_engine::Engine
+pub fn datumesh_engine::Engine::whatif(&self, &datumesh_core::model::CellRef, core::option::Option<&str>, &datumesh_engine::Overrides, core::option::Option<&datumesh_engine::Solve>) -> core::result::Result<datumesh_engine::ScenarioAnswer, datumesh_engine::EngineError>
 impl core::fmt::Debug for datumesh_engine::Engine
 pub fn datumesh_engine::Engine::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl datumesh_core::verify::Resolver for datumesh_engine::Engine
@@ -234,6 +257,40 @@ impl core::fmt::Debug for datumesh_engine::MemoStats
 pub fn datumesh_engine::MemoStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for datumesh_engine::MemoStats
 impl core::marker::StructuralPartialEq for datumesh_engine::MemoStats
+pub struct datumesh_engine::Overrides
+impl datumesh_engine::Overrides
+pub fn datumesh_engine::Overrides::is_empty(&self) -> bool
+pub fn datumesh_engine::Overrides::len(&self) -> usize
+pub fn datumesh_engine::Overrides::new() -> datumesh_engine::Overrides
+pub fn datumesh_engine::Overrides::slice(self, datumesh_core::model::CellRef, alloc::vec::Vec<(datumesh_core::model::CellRef, datumesh_core::model::Scalar)>, alloc::vec::Vec<datumesh_core::model::CellRef>) -> datumesh_engine::Overrides
+pub fn datumesh_engine::Overrides::value(self, datumesh_core::model::CellRef, datumesh_core::model::Scalar) -> datumesh_engine::Overrides
+impl core::clone::Clone for datumesh_engine::Overrides
+pub fn datumesh_engine::Overrides::clone(&self) -> Self
+impl core::default::Default for datumesh_engine::Overrides
+pub fn datumesh_engine::Overrides::default() -> Self
+impl core::fmt::Debug for datumesh_engine::Overrides
+pub fn datumesh_engine::Overrides::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct datumesh_engine::ScenarioAnswer
+pub datumesh_engine::ScenarioAnswer::asof: alloc::string::String
+pub datumesh_engine::ScenarioAnswer::cell: datumesh_core::model::Cell
+pub datumesh_engine::ScenarioAnswer::overrides: alloc::vec::Vec<datumesh_engine::ScenarioOverride>
+pub datumesh_engine::ScenarioAnswer::solved: core::option::Option<(datumesh_core::model::Cell, datumesh_core::model::Scalar)>
+pub datumesh_engine::ScenarioAnswer::ty: datumesh_core::model::Type
+pub datumesh_engine::ScenarioAnswer::value: datumesh_core::model::Scalar
+impl core::clone::Clone for datumesh_engine::ScenarioAnswer
+pub fn datumesh_engine::ScenarioAnswer::clone(&self) -> Self
+impl core::cmp::PartialEq for datumesh_engine::ScenarioAnswer
+pub fn datumesh_engine::ScenarioAnswer::eq(&self, &Self) -> bool
+impl core::fmt::Debug for datumesh_engine::ScenarioAnswer
+pub fn datumesh_engine::ScenarioAnswer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for datumesh_engine::ScenarioAnswer
+pub struct datumesh_engine::Solve
+impl datumesh_engine::Solve
+pub fn datumesh_engine::Solve::new(datumesh_core::model::CellRef, datumesh_core::model::CellRef, datumesh_core::model::Scalar, datumesh_core::model::Scalar, datumesh_core::model::Scalar) -> datumesh_engine::Solve
+impl core::clone::Clone for datumesh_engine::Solve
+pub fn datumesh_engine::Solve::clone(&self) -> Self
+impl core::fmt::Debug for datumesh_engine::Solve
+pub fn datumesh_engine::Solve::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct datumesh_engine::StoreError
 impl datumesh_engine::StoreError
 pub fn datumesh_engine::StoreError::is_conflict(&self) -> bool

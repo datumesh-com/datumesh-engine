@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use datumesh_core::{
-    inherit_licence, lexical, Args, Cell, Declarations, Error as CoreError, ErrorCode, Fault, FunctionDescriptor,
+    inherit_licence, lexical, Arg, Args, Cell, Declarations, Error as CoreError, ErrorCode, Fault, FunctionDescriptor,
     Inheritance, KeyDocument, LicenceReason, Manifest, Receipt, ReceiptBuilder, Scalar, Slice,
 };
 
@@ -26,6 +26,7 @@ use crate::memo::Entry;
 use crate::runtime::{Budget, FnBinding, Input, Inputs, Member, SlicePattern};
 use crate::sign::receipt_json;
 use crate::slice::{cells_slice, extent_cells, spec_of, versions_slice, Spec};
+use crate::whatif::{scoped_hash, Scope};
 
 /// The earliest instant: the asof and tx of a computed receipt with no inputs.
 pub(crate) const MIN_INSTANT: &str = "0001-01-01T00:00:00.000000Z";
@@ -183,6 +184,8 @@ pub(crate) struct MemberRec {
     args: Args,
     tx: String,
     asof: String,
+    /// A member a scenario changed: its hash is a scenario's, not a receipt's.
+    scoped: bool,
 }
 
 impl MemberRec {
@@ -295,6 +298,12 @@ pub(crate) struct Req<'e> {
     /// The answers this request made (not taken from the memo), inputs first: for the memo.
     pub(crate) learned: Vec<Entry>,
     budget: Budget,
+    /// The overrides of a scenario ([`Engine::whatif`](crate::Engine::whatif)): the request
+    /// evaluates in its scope, and writes nothing.
+    scope: Option<Arc<Scope>>,
+    /// The function names each function name reaches through declared inputs, itself
+    /// included, as of the request's asof (see [`Req::dependent`]).
+    closures: HashMap<String, Arc<HashSet<String>>>,
 }
 
 /// How an input of a version compares as of the asof.
@@ -365,7 +374,78 @@ impl<'e> Req<'e> {
             declarations: HashMap::new(),
             learned: Vec::new(),
             budget: Budget::with_work(eng.fuel, eng.work_limit),
+            scope: None,
+            closures: HashMap::new(),
         }
+    }
+
+    /// A request in the scope of a scenario, sharing `budget` (a solve's iterations share one).
+    pub(crate) fn scoped(eng: &'e Engine, asof: &str, issued: &str, scope: Arc<Scope>, budget: &Budget) -> Req<'e> {
+        let mut req = Req::new(eng, asof, issued);
+        req.budget = budget.share();
+        req.scope = Some(scope);
+        req
+    }
+
+    /// Whether the cell's value may change under the scenario's overrides: a computed cell
+    /// whose function reaches an overridden function through its declared inputs (as of the
+    /// request's asof). Such a cell is evaluated in the scope and never answered from the memo
+    /// or the store. Always false outside a scenario, and for a stored cell (its own override
+    /// is the only change it can have).
+    fn dependent(&mut self, cell: &Cell, desc: &FunctionDescriptor) -> Result<bool, EvalError> {
+        let Some(scope) = self.scope.clone() else { return Ok(false) };
+        if desc.lang == STORED || scope.affected.is_empty() {
+            return Ok(false);
+        }
+        let closure = self.closure(&cell.function_name())?;
+        Ok(closure.iter().any(|n| scope.affected.contains(n)))
+    }
+
+    /// The function names `fn_name` reaches through declared inputs (itself included), each
+    /// resolved as of the request's asof; cached per request.
+    fn closure(&mut self, fn_name: &str) -> Result<Arc<HashSet<String>>, EvalError> {
+        if let Some(c) = self.closures.get(fn_name) {
+            return Ok(c.clone());
+        }
+        let asof = self.asof.clone();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut todo = vec![fn_name.to_string()];
+        while let Some(name) = todo.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let Some(hash) = self.resolve(&name, &asof)? else { continue };
+            let Some(d) = self.eng.descriptor_of(&hash).map_err(eng_eval)? else { continue };
+            todo.extend(d.inputs.iter().cloned());
+        }
+        let closure = Arc::new(seen);
+        self.closures.insert(fn_name.to_string(), closure.clone());
+        Ok(closure)
+    }
+
+    /// The scenario's override of cell `id`, if any.
+    fn overridden(&self, id: &str) -> Option<(Cell, Scalar)> {
+        self.scope.as_ref().and_then(|s| s.values.get(id).cloned())
+    }
+
+    /// The answer of an overridden cell: its value, unsigned, valid from the asof on.
+    fn override_answer(&self, cell: &Cell, value: Scalar, asof: &str) -> Arc<Ans> {
+        let id = cell.id();
+        Arc::new(Ans {
+            hash: scoped_hash(&id, &value),
+            id,
+            bytes: Arc::new(Vec::new()),
+            value,
+            tx: MIN_INSTANT.to_string(),
+            asof: asof.to_string(),
+            licence: self.eng.licence.clone(),
+            lo: asof.to_string(),
+            hi: None,
+            names: Arc::new(Names::new()),
+            cell: cell.clone(),
+            inputs: Vec::new(),
+            memo: false,
+        })
     }
 
     /// The binding `fn_name` has as of `at`, its function hash and when it began (one query
@@ -435,6 +515,14 @@ impl<'e> Req<'e> {
     ) -> Result<Lookup, EvalError> {
         if let Some(d) = self.done_at(asof, id) {
             return Ok(Lookup::Ready(d.clone()));
+        }
+        if let Some((c, value)) = self.overridden(id) {
+            let d = Done::Value(self.override_answer(&c, value, asof));
+            self.set_done(asof, id, d.clone());
+            return Ok(Lookup::Ready(d));
+        }
+        if self.dependent(cell, &desc)? {
+            return Ok(Lookup::Eval(desc));
         }
         if let Some(d) = self.memo_done(id, asof)? {
             self.set_done(asof, id, d.clone());
@@ -512,7 +600,9 @@ impl<'e> Req<'e> {
         Ok(Done::Value(a))
     }
 
-    /// Answers `cell` (a computed cell with descriptor `desc`) as of the request's asof.
+    /// Answers `cell` (a computed cell with descriptor `desc`) as of the request's asof: its
+    /// frames run as one root, and the roots they split off run first (see
+    /// [`run_roots`](Req::run_roots)).
     pub(crate) fn run(
         &mut self,
         cell: Cell,
@@ -521,30 +611,71 @@ impl<'e> Req<'e> {
     ) -> Result<Done, EngineError> {
         let id = cell.id();
         let asof = self.asof.clone();
-        let state = if unsigned { State::Eval { cand: None } } else { State::Start };
+        self.run_roots(vec![Pend { cell, id: id.clone(), desc, asof: asof.clone() }], unsigned)?;
+        self.done_at(&asof, &id)
+            .cloned()
+            .ok_or_else(|| EngineError::Runtime { cell_id: id, message: "no answer".into() })
+    }
+
+    /// Runs the roots, the last first. A root whose frames would pass the depth limit is set
+    /// aside, and the pending cell that did not fit becomes a root of its own, run first
+    /// (trampolining, Build 2 E4). Nothing is lost: the answers the set-aside frames finished
+    /// are in the request, and the root runs again and finds them. Fuel and work are charged
+    /// throughout, so an unbounded recursion ends in `BudgetExceeded` or `WorkExceeded`.
+    fn run_roots(&mut self, mut roots: Vec<Pend>, unsigned: bool) -> Result<(), EngineError> {
+        while let Some(root) = roots.last().cloned() {
+            if self.done_at(&root.asof, &root.id).is_some() {
+                roots.pop();
+                continue;
+            }
+            let top = unsigned && roots.len() == 1;
+            match self.run_stack(root, top)? {
+                Ended::Done => {
+                    roots.pop();
+                }
+                Ended::Split(p) => roots.push(p),
+            }
+        }
+        Ok(())
+    }
+
+    /// One root's frames, from the root to its answer on an explicit stack. Instead of pushing
+    /// a frame past the depth limit it returns [`Ended::Split`] with the pending cell: the
+    /// frames are dropped, and their suspended attempts' fuel released.
+    fn run_stack(&mut self, root: Pend, unsigned: bool) -> Result<Ended, EngineError> {
         let key = |asof: &str, id: &str| format!("{asof} {id}");
+        let state = if unsigned { State::Eval { cand: None } } else { State::Start };
         let mut stack = vec![Frame {
-            cell,
-            id: id.clone(),
-            asof: asof.clone(),
-            desc,
+            cell: root.cell,
+            id: root.id.clone(),
+            asof: root.asof.clone(),
+            desc: root.desc,
             state,
             unsigned,
             pending: Vec::new(),
             floor: 0,
         }];
-        let mut on_stack: HashSet<String> = HashSet::from([key(&asof, &id)]);
-        while let Some(top) = stack.last_mut() {
+        let mut on_stack: HashSet<String> = HashSet::from([key(&root.asof, &root.id)]);
+        loop {
+            let Some(top) = stack.last_mut() else { return Ok(Ended::Done) };
             if let Some(p) = top.pending.pop() {
                 if self.done_at(&p.asof, &p.id).is_some() {
                     continue;
                 }
-                if !on_stack.insert(key(&p.asof, &p.id)) {
-                    return Err(EngineError::Cycle { cell_id: p.id });
+                if on_stack.contains(&key(&p.asof, &p.id)) {
+                    // The path: the frames from the cell that reappeared, then it again.
+                    let at = stack.iter().position(|f| f.id == p.id && f.asof == p.asof).unwrap_or(0);
+                    let mut path: Vec<String> = stack[at..].iter().map(|f| canonical_call(&f.cell)).collect();
+                    path.push(canonical_call(&p.cell));
+                    return Err(EngineError::Cycle { path });
                 }
                 if stack.len() >= self.eng.depth_limit {
-                    return Err(EngineError::DepthExceeded { limit: self.eng.depth_limit });
+                    for f in &stack {
+                        self.budget.release(f.floor);
+                    }
+                    return Ok(Ended::Split(p));
                 }
+                on_stack.insert(key(&p.asof, &p.id));
                 stack.push(Frame {
                     cell: p.cell,
                     id: p.id,
@@ -558,7 +689,7 @@ impl<'e> Req<'e> {
                 continue;
             }
             let step = match top.state {
-                State::Start => self.start_frame(top),
+                State::Start => self.start_frame(top)?,
                 State::Recheck { .. } => self.recheck_frame(top)?,
                 State::FromStore => self.store_frame(top)?,
                 State::Validate { .. } => self.validate_frame(top)?,
@@ -593,18 +724,110 @@ impl<'e> Req<'e> {
                 }
             }
         }
-        self.done_at(&asof, &id)
-            .cloned()
-            .ok_or_else(|| EngineError::Runtime { cell_id: id, message: "no answer".into() })
+    }
+
+    /// A scenario's answer for `cell` (its descriptor `desc`) as of the request's asof. Before
+    /// the cell runs, the dependent cells below it are evaluated in dependency order (from the
+    /// receipts of its latest computed version), so that it reads them without suspending.
+    pub(crate) fn scope_run(&mut self, cell: Cell, desc: Arc<FunctionDescriptor>) -> Result<Done, EngineError> {
+        let id = cell.id();
+        let asof = self.asof.clone();
+        for p in self.scope_order(&cell)? {
+            if self.done_at(&p.asof, &p.id).is_some() {
+                continue;
+            }
+            // A cycle here is an artifact of the order (the receipts were made at other
+            // instants): the cell is then run as it is, and reports the cycle if it has one.
+            match self.run_roots(vec![p], false) {
+                Ok(()) | Err(EngineError::Cycle { .. }) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        match self.lookup(&cell, &id, desc.clone(), &asof).map_err(|e| engine_error(e, &id))? {
+            Lookup::Ready(d) => Ok(d),
+            Lookup::Eval(desc) => self.run(cell, desc, false),
+        }
+    }
+
+    /// The dependent computed cells in the lineage of `top`'s latest computed version, inputs
+    /// first (a post-order walk of the receipts, which are acyclic).
+    fn scope_order(&mut self, top: &Cell) -> Result<Vec<Pend>, EngineError> {
+        let asof = self.asof.clone();
+        let Some((v, bytes)) = self
+            .eng
+            .store
+            .computed_asof_with_receipt(&top.id(), &asof)
+            .map_err(|e| StoreError::new("computed_asof", e))?
+        else {
+            return Ok(Vec::new());
+        };
+        let root = self.eng.parsed(&v.receipt_hash, &bytes)?;
+        let mut seen: HashSet<String> = HashSet::from([top.id()]);
+        let mut out = Vec::new();
+        let mut stack: Vec<(Arc<Parsed>, Arc<FunctionDescriptor>, bool)> = Vec::new();
+        for c in self.lineage(&root)? {
+            if let Some(d) = self.scope_child(&c)? {
+                stack.push((c, d, false));
+            }
+        }
+        while let Some((r, d, expanded)) = stack.pop() {
+            let cell = r.receipt.cell().clone();
+            let id = cell.id();
+            if expanded {
+                out.push(Pend { cell, id, desc: d, asof: asof.clone() });
+                continue;
+            }
+            if !seen.insert(id) {
+                continue;
+            }
+            stack.push((r.clone(), d, true));
+            for c in self.lineage(&r)? {
+                if let Some(cd) = self.scope_child(&c)? {
+                    stack.push((c, cd, false));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The descriptor of `r`'s cell, when that cell is a dependent computed one.
+    fn scope_child(&mut self, r: &Parsed) -> Result<Option<Arc<FunctionDescriptor>>, EngineError> {
+        let cell = r.receipt.cell();
+        let Some(d) = self.eng.descriptor_of(&cell.fn_hash)? else { return Ok(None) };
+        let dependent = self.dependent(cell, &d).map_err(|e| engine_error(e, &cell.id()))?;
+        Ok(dependent.then_some(d))
+    }
+
+    /// The receipts a receipt reads: its inputs, and for a slice entry its members' receipts.
+    fn lineage(&mut self, r: &Parsed) -> Result<Vec<Arc<Parsed>>, EngineError> {
+        let mut out = Vec::new();
+        for entry in r.receipt.inputs() {
+            if entry.starts_with("slice:") {
+                let Some(bytes) = self.eng.store.manifest(entry) else { continue };
+                let m = Manifest::from_json(&bytes).map_err(EngineError::Invalid)?;
+                for h in m.members() {
+                    if let Some(p) = self.receipt(h)? {
+                        out.push(p);
+                    }
+                }
+            } else if let Some(p) = self.receipt(entry)? {
+                out.push(p);
+            }
+        }
+        Ok(out)
     }
 
     /// A dropped answer to recheck, if the memo has one holding at the asof.
-    fn start_frame(&mut self, f: &mut Frame) -> Step {
+    fn start_frame(&mut self, f: &mut Frame) -> Result<Step, EngineError> {
+        if self.dependent(&f.cell, &f.desc).map_err(|e| engine_error(e, &f.id))? {
+            f.state = State::Eval { cand: None };
+            return Ok(Step::Again);
+        }
         f.state = match self.eng.memo.stale(&f.id, &f.asof) {
             Some(ans) => State::Recheck { ans, idx: 0, read: Vec::new(), names: Names::new() },
             None => State::FromStore,
         };
-        Step::Again
+        Ok(Step::Again)
     }
 
     /// Rechecks a dropped answer as a version is validated (same receipt or value from each
@@ -948,6 +1171,7 @@ impl<'e> Req<'e> {
                         args: a.cell.args.clone(),
                         tx: a.tx.clone(),
                         asof: a.asof.clone(),
+                        scoped: false,
                     });
                 }
                 lo = member_ans.iter().map(|a| a.lo.clone()).max();
@@ -974,7 +1198,11 @@ impl<'e> Req<'e> {
                         args: v.cell.args,
                         tx: v.version.tx,
                         asof: v.version.asof,
+                        scoped: false,
                     });
+                }
+                if let Some(scope) = self.scope.clone() {
+                    apply_scope(&scope, &slice, asof, &mut members);
                 }
                 // Holding past the asof: when no version of a matching cell answers later, else
                 // at the asof only. Versions stored later are the dirty set's.
@@ -1133,7 +1361,8 @@ impl<'e> Req<'e> {
         };
         let declared = self.eng.asof_dependent(&f.cell.fn_hash, &f.desc);
         let mut budget = self.budget.share();
-        budget.begin_attempt(f.floor);
+        let floor = std::mem::take(&mut f.floor);
+        budget.begin_attempt(floor);
         let mut reader = Reader {
             budget: self.budget.share(),
             asof: f.asof.clone(),
@@ -1351,7 +1580,7 @@ impl<'e> Req<'e> {
                 && self.entitled_with(f, &licences, &c.receipt)?
             {
                 existing = Some(c.clone());
-            } else if c.receipt.tx() == tx && c.receipt.asof() == asof {
+            } else if self.scope.is_none() && c.receipt.tx() == tx && c.receipt.asof() == asof {
                 // The new version would share the old one's (tx, asof), which the store's key
                 // holds once (an input corrected with a tx earlier than another input's; a
                 // version signed again for its licence): a receipt signed before for exactly
@@ -1385,6 +1614,24 @@ impl<'e> Req<'e> {
         let Some(licence) = rule.licence else {
             return Err(EngineError::Unlicensed { cell_id: f.id.clone(), reason: rule.reason });
         };
+        if self.scope.is_some() {
+            // A scenario writes nothing: its answer is unsigned, and nothing is kept.
+            return Ok(Arc::new(Ans {
+                id: f.id.clone(),
+                hash: scoped_hash(&f.id, &value),
+                bytes: Arc::new(Vec::new()),
+                value,
+                tx,
+                asof,
+                licence,
+                lo,
+                hi,
+                names: facts.names,
+                cell: f.cell.clone(),
+                inputs: facts.inputs,
+                memo: false,
+            }));
+        }
         let summary = match &self.eng.summary {
             Some(s) => s(&f.cell),
             None => format!("{} computed by {}.", f.cell.function_name(), self.eng.host),
@@ -1498,6 +1745,10 @@ impl<'e> Req<'e> {
                 Rd::Slice(s) if s.computed => out.extend(s.member_ans.iter().map(|a| a.licence.clone())),
                 Rd::Slice(s) => {
                     for m in &s.members {
+                        if m.scoped {
+                            out.push(self.eng.licence.clone());
+                            continue;
+                        }
                         let Some(p) = self.receipt(&m.hash)? else {
                             return Err(StoreError::new(
                                 "receipt",
@@ -1576,6 +1827,11 @@ impl<'e> Req<'e> {
     /// Writes the request's new manifests, receipts and computed versions: manifests and
     /// receipts first (inputs before the receipts reading them), then the versions.
     pub(crate) fn flush(&mut self) -> Result<(), EngineError> {
+        if self.scope.is_some() {
+            self.fresh.clear();
+            self.manifests.clear();
+            return Ok(());
+        }
         // Nothing is written when a receipt would be (SPEC 9.9): the store refuses the receipts
         // under a suspended namespace, and the manifests (not refused) are not written before.
         if !self.fresh.is_empty() {
@@ -1607,6 +1863,73 @@ impl<'e> Req<'e> {
         self.manifests.clear();
         Ok(())
     }
+}
+
+/// Applies a scenario to the members of a stored slice read as of `asof`: the removed members
+/// go, the value overrides of members apply, and the added members come (sorted by cell id).
+fn apply_scope(scope: &Scope, slice: &Slice, asof: &str, members: &mut Vec<MemberRec>) {
+    let ov = scope.slices.get(slice.id());
+    if let Some(o) = ov {
+        members.retain(|m| !o.remove.contains(&m.id));
+    }
+    for m in members.iter_mut() {
+        if let Some((_, v)) = scope.values.get(&m.id) {
+            m.value = v.clone();
+            m.hash = scoped_hash(&m.id, v);
+            m.scoped = true;
+        }
+    }
+    if let Some(o) = ov {
+        for (c, v) in &o.add {
+            let id = c.id();
+            let value = scope.values.get(&id).map_or_else(|| v.clone(), |x| x.1.clone());
+            members.push(MemberRec {
+                hash: scoped_hash(&id, &value),
+                id,
+                value,
+                args: c.args.clone(),
+                tx: asof.to_string(),
+                asof: asof.to_string(),
+                scoped: true,
+            });
+        }
+    }
+    members.sort_by(|a, b| a.id.cmp(&b.id));
+}
+
+/// A cell's canonical call, as a cycle's path names it (SPEC 5.8): `<ns>/<fn>(<label>: <literal>,
+/// ...)`, labels ascending, strings quoted with `"` doubled; no arguments: `()`.
+pub(crate) fn canonical_call(cell: &Cell) -> String {
+    let args: Vec<String> = cell
+        .args
+        .iter()
+        .map(|(k, a)| {
+            let literal = match a {
+                Arg::Value(Scalar::String(s)) => format!("\"{}\"", s.replace('"', "\"\"")),
+                Arg::Value(v) => v.lexical().to_string(),
+                Arg::Slice => "*".to_string(),
+            };
+            format!("{k}: {literal}")
+        })
+        .collect();
+    format!("{}/{}({})", cell.ns, cell.fn_name, args.join(", "))
+}
+
+/// An evaluation error from the engine's own lookups, as an evaluation sees it.
+fn eng_eval(e: EngineError) -> EvalError {
+    match e {
+        EngineError::Store(e) => EvalError::Store(e),
+        EngineError::Invalid(e) => EvalError::InvalidInput(e),
+        other => EvalError::Runtime(other.to_string()),
+    }
+}
+
+/// What running a root's frames ended with.
+enum Ended {
+    /// The root has its answer.
+    Done,
+    /// The root's stack would pass the depth limit at this pending cell: it runs first.
+    Split(Pend),
 }
 
 /// Whether the members `old` (cell id, value) are the cells of `now` with the same values.
@@ -2019,7 +2342,7 @@ pub(crate) fn engine_error(e: EvalError, cell_id: &str) -> EngineError {
     match e {
         EvalError::NoRuntime { lang } => EngineError::NoRuntime { lang, fn_hash: String::new() },
         EvalError::UndeclaredInput { fn_name } => EngineError::UndeclaredInput { fn_name },
-        EvalError::Cycle { cell_id } => EngineError::Cycle { cell_id },
+        EvalError::Cycle { path } => EngineError::Cycle { path },
         EvalError::DepthExceeded { limit } => EngineError::DepthExceeded { limit },
         EvalError::BudgetExceeded { fuel } => EngineError::BudgetExceeded { fuel },
         EvalError::NameUnresolved { fn_name, asof } => EngineError::NameUnresolved { fn_name, asof },

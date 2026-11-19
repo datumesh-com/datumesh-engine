@@ -205,8 +205,17 @@
 //! runtime reads a computed input not answered yet, [`Inputs::read`] returns
 //! [`EvalError::Suspended`]; the engine pushes a frame for the input and, once it is answered,
 //! runs the suspended function again from the start, its earlier reads now answered at once
-//! from the request. A cell reappearing on the stack is [`EngineError::Cycle`]; more frames
-//! than the depth limit (default 10,000) is [`EngineError::DepthExceeded`].
+//! from the request. A cell reappearing on the stack is [`EngineError::Cycle`], which names
+//! its path (since 0.5.0). Past the depth limit (default 10,000) the evaluation does not fail:
+//! it evaluates the deepest pending cell first as a root of its own, within the same request
+//! (since 0.5.0), so the answer and its receipts are those of a shallow evaluation; fuel and
+//! work still bound it ([`EngineError::BudgetExceeded`], [`EngineError::WorkExceeded`]).
+//!
+//! # Scenarios
+//!
+//! [`Engine::whatif`] (since 0.5.0) evaluates a cell with overrides in place, as a labelled
+//! scenario: nothing is written, signed or memoised, and the answer has no receipt. A solve
+//! ([`Solve`]) finds the value of one number cell by bisection.
 //!
 //! The cost of the restart scheme: a function whose k computed inputs are all missing when it
 //! starts runs up to k + 1 times and re-reads its earlier inputs each time (O(k^2) reads at
@@ -304,6 +313,7 @@ pub mod native_test;
 mod runtime;
 mod sign;
 mod slice;
+mod whatif;
 
 pub use clock::{Clock, SystemClock};
 pub use engine::{
@@ -312,3 +322,4 @@ pub use engine::{
 };
 pub use error::{ConfigError, EngineError, EvalError, StoreError};
 pub use runtime::{Budget, FnBinding, Input, Inputs, Member, Pattern, Runtime, SlicePattern};
+pub use whatif::{Overrides, ScenarioAnswer, ScenarioOverride, Solve};

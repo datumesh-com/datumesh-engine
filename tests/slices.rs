@@ -353,7 +353,10 @@ fn a_member_on_the_evaluation_stack_is_a_cycle() {
     });
     let e = w.engine();
     match e.get(&w.cellref(SUM, &[]), Some(&t(20, 0))) {
-        Err(EngineError::Cycle { cell_id }) => assert_eq!(cell_id, w.cell(SUM, &[]).id()),
+        // The path starts at the cell that reappeared (SUM), through LOOP(n: 2), and ends with SUM.
+        Err(EngineError::Cycle { path }) => {
+            assert_eq!(path, vec![format!("{SUM}()"), format!("{LOOP}(n: 2)"), format!("{SUM}()")])
+        }
         other => panic!("{other:?}"),
     }
     assert_eq!(w.db().count("receipts"), 0);

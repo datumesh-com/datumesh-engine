@@ -189,6 +189,7 @@ fn a_scenario_writes_nothing() {
     // Warm.
     e.get(&r(&w, TOP), None).unwrap();
     let before = snapshot(&w, &e);
+    let warm = before;
     assert!(before.0[1] > 0);
     e.whatif(&r(&w, TOP), None, &o, None).unwrap();
     e.whatif(&r(&w, TOP), Some(&t(11, 0)), &o, None).unwrap();
@@ -201,7 +202,7 @@ fn a_scenario_writes_nothing() {
     // And a scenario that fails writes nothing either.
     let bad = Overrides::new().value(r(&w, A), text("x"));
     assert!(e.whatif(&r(&w, TOP), None, &bad, None).is_err());
-    assert_eq!(snapshot(&w, &e), before);
+    assert_eq!(snapshot(&w, &e), warm, "a failed scenario: nothing written, warm snapshot");
 }
 
 #[test]
@@ -263,9 +264,13 @@ fn a_slice_override_adds_and_removes_members_for_a_computed_reader() {
         value(Overrides::new().slice(slice.clone(), vec![(temp(&w, "d"), num("100"))], vec![temp(&w, "b")])),
         num("140")
     );
-    assert_eq!(value(Overrides::new().slice(slice.clone(), vec![], vec![temp(&w, "a"), temp(&w, "b"), temp(&w, "c")])), num("0"));
+    assert_eq!(
+        value(Overrides::new().slice(slice.clone(), vec![], vec![temp(&w, "a"), temp(&w, "b"), temp(&w, "c")])),
+        num("0")
+    );
     // A value override of a member and a slice override together.
-    let o = Overrides::new().value(temp(&w, "a"), num("1")).slice(slice.clone(), vec![(temp(&w, "d"), num("100"))], vec![]);
+    let o =
+        Overrides::new().value(temp(&w, "a"), num("1")).slice(slice.clone(), vec![(temp(&w, "d"), num("100"))], vec![]);
     assert_eq!(value(o), num("151"));
     // An added cell read alone answers its override value.
     let o = Overrides::new().slice(slice.clone(), vec![(temp(&w, "d"), num("100"))], vec![]);
@@ -275,7 +280,11 @@ fn a_slice_override_adds_and_removes_members_for_a_computed_reader() {
         .whatif(
             &total,
             None,
-            &Overrides::new().slice(slice, vec![(temp(&w, "e"), num("1")), (temp(&w, "d"), num("2"))], vec![temp(&w, "c"), temp(&w, "a")]),
+            &Overrides::new().slice(
+                slice,
+                vec![(temp(&w, "e"), num("1")), (temp(&w, "d"), num("2"))],
+                vec![temp(&w, "c"), temp(&w, "a")],
+            ),
             None,
         )
         .unwrap();
@@ -311,8 +320,14 @@ fn override_validation_codes() {
     assert_eq!(code(go(&w, Overrides::new().value(r(&w, A), text("x")))), "E_CANON_TYPE");
     assert_eq!(code(go(&w, Overrides::new().value(r(&w, A), date("2024-03-10")))), "E_CANON_TYPE");
     // The same cell twice.
-    assert_eq!(code(go(&w, Overrides::new().value(r(&w, A), num("1")).value(r(&w, A), num("2")))), "E_CANON_ARG_DUPLICATE");
-    assert_eq!(code(go(&w, Overrides::new().value(r(&w, A), num("1")).value(r(&w, A), num("1")))), "E_CANON_ARG_DUPLICATE");
+    assert_eq!(
+        code(go(&w, Overrides::new().value(r(&w, A), num("1")).value(r(&w, A), num("2")))),
+        "E_CANON_ARG_DUPLICATE"
+    );
+    assert_eq!(
+        code(go(&w, Overrides::new().value(r(&w, A), num("1")).value(r(&w, A), num("1")))),
+        "E_CANON_ARG_DUPLICATE"
+    );
 
     let sw = slice_world();
     let e2 = sw.engine();
@@ -330,14 +345,25 @@ fn override_validation_codes() {
     let south = sw.cellref(TEMP, &[("region", text("south")), ("station", text("a"))]);
     assert_eq!(code(go2(Overrides::new().slice(slice.clone(), vec![(south, num("1"))], vec![]))), "E_SLICE_MEMBER");
     // A member of the wrong type.
-    assert_eq!(code(go2(Overrides::new().slice(slice.clone(), vec![(temp(&sw, "d"), text("x"))], vec![]))), "E_CANON_TYPE");
+    assert_eq!(
+        code(go2(Overrides::new().slice(slice.clone(), vec![(temp(&sw, "d"), text("x"))], vec![]))),
+        "E_CANON_TYPE"
+    );
     // Two overrides of one slice; and one cell added twice.
     assert_eq!(
-        code(go2(Overrides::new().slice(slice.clone(), vec![], vec![temp(&sw, "a")]).slice(slice.clone(), vec![], vec![temp(&sw, "b")]))),
+        code(go2(Overrides::new().slice(slice.clone(), vec![], vec![temp(&sw, "a")]).slice(
+            slice.clone(),
+            vec![],
+            vec![temp(&sw, "b")]
+        ))),
         "E_CANON_ARG_DUPLICATE"
     );
     assert_eq!(
-        code(go2(Overrides::new().slice(slice.clone(), vec![(temp(&sw, "d"), num("1")), (temp(&sw, "d"), num("2"))], vec![]))),
+        code(go2(Overrides::new().slice(
+            slice.clone(),
+            vec![(temp(&sw, "d"), num("1")), (temp(&sw, "d"), num("2"))],
+            vec![]
+        ))),
         "E_CANON_ARG_DUPLICATE"
     );
     assert_eq!(sw.db().count("versions"), 3);

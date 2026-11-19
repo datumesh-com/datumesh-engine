@@ -118,3 +118,19 @@ required-features = ["native-test"]
 [[test]]
 name = "pinned"
 required-features = ["native-test"]
+
+[[test]]
+name = "whatif"
+required-features = ["native-test"]
+
+[[test]]
+name = "solver"
+required-features = ["native-test"]
+
+[[test]]
+name = "cycle_paths"
+required-features = ["native-test"]
+
+[[test]]
+name = "deep_recursion"
+required-features = ["native-test"]

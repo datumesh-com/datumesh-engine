@@ -178,6 +178,8 @@ dependencies = [
 [[package]]
 name = "datumesh-store"
 version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7378b953b46144f3ba1cd1e0ca610d745d8c717b4c073dc07aa8f8cee04701f4"
 dependencies = [
  "datumesh-core",
  "postgres",

@@ -30,7 +30,7 @@ pub struct Overrides {
 #[derive(Clone, Debug)]
 enum Override {
     Value { cell: CellRef, value: Scalar },
-    Slice { slice: CellRef, add: Vec<(CellRef, Scalar)>, remove: Vec<CellRef> },
+    Slice { slice: CellRef, members: Option<Vec<(CellRef, Scalar)>>, add: Vec<(CellRef, Scalar)>, remove: Vec<CellRef> },
 }
 
 impl Overrides {
@@ -47,8 +47,27 @@ impl Overrides {
 
     /// The members of the stored slice `slice` (a cell reference with its open arguments left
     /// open) change: `add` are new members with their values, `remove` are members that go.
-    pub fn slice(mut self, slice: CellRef, add: Vec<(CellRef, Scalar)>, remove: Vec<CellRef>) -> Overrides {
-        self.items.push(Override::Slice { slice, add, remove });
+    pub fn slice(self, slice: CellRef, add: Vec<(CellRef, Scalar)>, remove: Vec<CellRef>) -> Overrides {
+        self.slice_full(slice, None, add, remove)
+    }
+
+    /// The members of the stored slice `slice` become exactly `members` (cells and their values,
+    /// possibly none): the stored members are not read. Since 0.6.0 (SPEC 5.9).
+    pub fn slice_members(self, slice: CellRef, members: Vec<(CellRef, Scalar)>) -> Overrides {
+        self.slice_full(slice, Some(members), Vec::new(), Vec::new())
+    }
+
+    /// The general form of the slice overrides. `members`, when `Some`, is the member set, as
+    /// [`slice_members`](Overrides::slice_members); it is refused with a non-empty `add` or
+    /// `remove` (`E_SLICE_MEMBER`, when the scenario is built). Since 0.6.0.
+    pub fn slice_full(
+        mut self,
+        slice: CellRef,
+        members: Option<Vec<(CellRef, Scalar)>>,
+        add: Vec<(CellRef, Scalar)>,
+        remove: Vec<CellRef>,
+    ) -> Overrides {
+        self.items.push(Override::Slice { slice, members, add, remove });
         self
     }
 
@@ -122,6 +141,14 @@ pub enum ScenarioOverride {
         /// The removed members.
         remove: Vec<Cell>,
     },
+    /// A stored slice whose whole member set is replaced (since 0.6.0); the members sorted by
+    /// cell id, present even when there are none.
+    Members {
+        /// The slice (its open arguments are [`Arg::Slice`]).
+        slice: Cell,
+        /// The members, with their values.
+        members: Vec<(Cell, Scalar)>,
+    },
 }
 
 impl ScenarioOverride {
@@ -129,7 +156,7 @@ impl ScenarioOverride {
     pub fn id(&self) -> String {
         match self {
             ScenarioOverride::Value { cell, .. } => cell.id(),
-            ScenarioOverride::Slice { slice, .. } => slice.id(),
+            ScenarioOverride::Slice { slice, .. } | ScenarioOverride::Members { slice, .. } => slice.id(),
         }
     }
 }
@@ -150,6 +177,8 @@ pub(crate) struct Scope {
 pub(crate) struct SliceOverride {
     pub(crate) add: Vec<(Cell, Scalar)>,
     pub(crate) remove: HashSet<String>,
+    /// The whole member set, when the override replaces it (`members`).
+    pub(crate) members: Option<Vec<(Cell, Scalar)>>,
 }
 
 impl Scope {
@@ -256,7 +285,10 @@ impl Engine {
                     scope.values.insert(id, (c.clone(), value.clone()));
                     list.push(ScenarioOverride::Value { cell: c, value: value.clone() });
                 }
-                Override::Slice { slice, add, remove } => {
+                Override::Slice { slice, members, add, remove } => {
+                    if members.is_some() && (!add.is_empty() || !remove.is_empty()) {
+                        return Err(refused("E_SLICE_MEMBER"));
+                    }
                     let Some((hash, desc)) = self.function_as_of(&slice.ns, &slice.fn_name, asof)? else {
                         return Err(EngineError::NameUnresolved {
                             fn_name: format!("{}/{}", slice.ns, slice.fn_name),
@@ -303,6 +335,30 @@ impl Engine {
                         }
                         removes.push(cell);
                     }
+                    // The whole member set: each a cell of the slice (its function and arguments),
+                    // once, with a value of the return type.
+                    let member_list = match members {
+                        None => None,
+                        Some(ms) => {
+                            let mut out: Vec<(Cell, Scalar)> = Vec::with_capacity(ms.len());
+                            let mut ids = HashSet::new();
+                            for (c, v) in ms {
+                                let cell = c.resolve(&hash).map_err(EngineError::Invalid)?;
+                                if cell.function_name() != fn_name
+                                    || !matches(&pattern, &cell)
+                                    || !ids.insert(cell.id())
+                                {
+                                    return Err(refused("E_SLICE_MEMBER"));
+                                }
+                                check_args(&cell, &desc).map_err(EngineError::Invalid)?;
+                                if v.ty() != desc.signature.returns.ty {
+                                    return Err(refused("E_CANON_TYPE"));
+                                }
+                                out.push((cell, v.clone()));
+                            }
+                            Some(out)
+                        }
+                    };
                     let mut add_ids = HashSet::new();
                     for (c, _) in &adds {
                         if !add_ids.insert(c.id()) {
@@ -318,7 +374,7 @@ impl Engine {
                     if adds.iter().any(|(c, _)| remove_ids.contains(&c.id())) {
                         return Err(refused("E_SLICE_MEMBER"));
                     }
-                    let members: HashSet<String> = self
+                    let stored: HashSet<String> = self
                         .store
                         .slice_values(&s, asof)
                         .map_err(|e| StoreError::new("slice_values", e))?
@@ -326,12 +382,16 @@ impl Engine {
                         .map(|v| v.version.cell_id)
                         .collect();
                     for c in &removes {
-                        if !matches(&pattern, c) || !members.contains(&c.id()) {
+                        if !matches(&pattern, c) || !stored.contains(&c.id()) {
                             return Err(refused("E_SLICE_MEMBER"));
                         }
                     }
+                    // A member answers its value read alone, as an added one does.
+                    for (c, v) in member_list.iter().flatten() {
+                        scope.values.insert(c.id(), (c.clone(), v.clone()));
+                    }
                     for (c, v) in &adds {
-                        if !matches(&pattern, c) || members.contains(&c.id()) {
+                        if !matches(&pattern, c) || stored.contains(&c.id()) {
                             return Err(refused("E_SLICE_MEMBER"));
                         }
                         if v.ty() != desc.signature.returns.ty {
@@ -341,11 +401,23 @@ impl Engine {
                         scope.values.insert(c.id(), (c.clone(), v.clone()));
                     }
                     scope.affected.insert(fn_name);
-                    scope.slices.insert(sid, SliceOverride { add: adds.clone(), remove: remove_ids });
-                    let mut add_sorted = adds;
+                    let mut add_sorted = adds.clone();
                     add_sorted.sort_by_key(|(c, _)| c.id());
                     removes.sort_by_key(|c| c.id());
-                    list.push(ScenarioOverride::Slice { slice: slice_cell, add: add_sorted, remove: removes });
+                    match member_list {
+                        Some(mut ms) => {
+                            ms.sort_by_key(|(c, _)| c.id());
+                            scope.slices.insert(
+                                sid,
+                                SliceOverride { add: Vec::new(), remove: HashSet::new(), members: Some(ms.clone()) },
+                            );
+                            list.push(ScenarioOverride::Members { slice: slice_cell, members: ms });
+                        }
+                        None => {
+                            scope.slices.insert(sid, SliceOverride { add: adds, remove: remove_ids, members: None });
+                            list.push(ScenarioOverride::Slice { slice: slice_cell, add: add_sorted, remove: removes });
+                        }
+                    }
                 }
             }
         }

@@ -1884,6 +1884,13 @@ impl<'e> Req<'e> {
 /// go, the value overrides of members apply, and the added members come (sorted by cell id).
 fn apply_scope(scope: &Scope, slice: &Slice, asof: &str, members: &mut Vec<MemberRec>) {
     let ov = scope.slices.get(slice.id());
+    if let Some(list) = ov.and_then(|o| o.members.as_ref()) {
+        // A members override replaces the whole member set: the stored members are left out.
+        members.clear();
+        members.extend(list.iter().map(|(c, v)| override_member(c, v, asof, scope)));
+        members.sort_by(|a, b| a.id.cmp(&b.id));
+        return;
+    }
     if let Some(o) = ov {
         members.retain(|m| !o.remove.contains(&m.id));
     }
@@ -1896,20 +1903,25 @@ fn apply_scope(scope: &Scope, slice: &Slice, asof: &str, members: &mut Vec<Membe
     }
     if let Some(o) = ov {
         for (c, v) in &o.add {
-            let id = c.id();
-            let value = scope.values.get(&id).map_or_else(|| v.clone(), |x| x.1.clone());
-            members.push(MemberRec {
-                hash: scoped_hash(&id, &value),
-                id,
-                value,
-                args: c.args.clone(),
-                tx: asof.to_string(),
-                asof: asof.to_string(),
-                scoped: true,
-            });
+            members.push(override_member(c, v, asof, scope));
         }
     }
     members.sort_by(|a, b| a.id.cmp(&b.id));
+}
+
+/// An overridden member of a slice, as the scenario reads it (its value in the scope).
+fn override_member(c: &Cell, v: &Scalar, asof: &str, scope: &Scope) -> MemberRec {
+    let id = c.id();
+    let value = scope.values.get(&id).map_or_else(|| v.clone(), |x| x.1.clone());
+    MemberRec {
+        hash: scoped_hash(&id, &value),
+        id,
+        value,
+        args: c.args.clone(),
+        tx: asof.to_string(),
+        asof: asof.to_string(),
+        scoped: true,
+    }
 }
 
 /// A cell's canonical call, as a cycle's path names it (SPEC 5.8): `<ns>/<fn>(<label>: <literal>,

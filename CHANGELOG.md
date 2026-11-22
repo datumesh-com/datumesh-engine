@@ -14,6 +14,12 @@ On `datumesh-store` 0.6.0 and `datumesh-core` 0.3.13.
   `receipt` is the withdrawal's canonical bytes (what `Resolver::receipt` gives for its hash),
   `reason` its `withdrawn` text, read with core's `Withdrawal` (never `Receipt::from_json`). The
   HTTP layer answers `not_covered` with the `withdrawn` member.
+- Whatif members override (R3; SPEC 5.9): `Overrides::slice_members(slice, members)` replaces a
+  stored slice's whole member set with exactly `members` (cells and values; possibly none), and
+  `Overrides::slice_full(slice, members: Option<..>, add, remove)` is the general form.
+  `members` with `add` or `remove` is `E_SLICE_MEMBER`, as is a member that is not a cell of the
+  slice (by its function and arguments) or one given twice. `ScenarioOverride::Members { slice,
+  members }` lists it, sorted by cell id and present even when empty. Nothing is written.
 
 ### Changed
 

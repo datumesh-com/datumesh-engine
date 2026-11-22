@@ -143,6 +143,9 @@ impl core::fmt::Debug for datumesh_engine::Pattern
 pub fn datumesh_engine::Pattern::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for datumesh_engine::Pattern
 #[non_exhaustive] pub enum datumesh_engine::ScenarioOverride
+pub datumesh_engine::ScenarioOverride::Members
+pub datumesh_engine::ScenarioOverride::Members::members: alloc::vec::Vec<(datumesh_core::model::Cell, datumesh_core::model::Scalar)>
+pub datumesh_engine::ScenarioOverride::Members::slice: datumesh_core::model::Cell
 pub datumesh_engine::ScenarioOverride::Slice
 pub datumesh_engine::ScenarioOverride::Slice::add: alloc::vec::Vec<(datumesh_core::model::Cell, datumesh_core::model::Scalar)>
 pub datumesh_engine::ScenarioOverride::Slice::remove: alloc::vec::Vec<datumesh_core::model::Cell>
@@ -266,6 +269,8 @@ pub fn datumesh_engine::Overrides::is_empty(&self) -> bool
 pub fn datumesh_engine::Overrides::len(&self) -> usize
 pub fn datumesh_engine::Overrides::new() -> datumesh_engine::Overrides
 pub fn datumesh_engine::Overrides::slice(self, datumesh_core::model::CellRef, alloc::vec::Vec<(datumesh_core::model::CellRef, datumesh_core::model::Scalar)>, alloc::vec::Vec<datumesh_core::model::CellRef>) -> datumesh_engine::Overrides
+pub fn datumesh_engine::Overrides::slice_full(self, datumesh_core::model::CellRef, core::option::Option<alloc::vec::Vec<(datumesh_core::model::CellRef, datumesh_core::model::Scalar)>>, alloc::vec::Vec<(datumesh_core::model::CellRef, datumesh_core::model::Scalar)>, alloc::vec::Vec<datumesh_core::model::CellRef>) -> datumesh_engine::Overrides
+pub fn datumesh_engine::Overrides::slice_members(self, datumesh_core::model::CellRef, alloc::vec::Vec<(datumesh_core::model::CellRef, datumesh_core::model::Scalar)>) -> datumesh_engine::Overrides
 pub fn datumesh_engine::Overrides::value(self, datumesh_core::model::CellRef, datumesh_core::model::Scalar) -> datumesh_engine::Overrides
 impl core::clone::Clone for datumesh_engine::Overrides
 pub fn datumesh_engine::Overrides::clone(&self) -> Self

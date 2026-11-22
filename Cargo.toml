@@ -138,3 +138,7 @@ required-features = ["native-test"]
 [[test]]
 name = "engine_060_withdrawal"
 required-features = ["native-test"]
+
+[[test]]
+name = "engine_060_whatif_members"
+required-features = ["native-test"]

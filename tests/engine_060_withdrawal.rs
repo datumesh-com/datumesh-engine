@@ -54,8 +54,7 @@ const COUNT: &str = "calc.example.net/count";
 const AT_USD: &str = "calc.example.net/at_usd";
 const AT_USD_OR_0: &str = "calc.example.net/at_usd_or_zero";
 
-const IDS: [&str; 4] =
-    ["withdrawn-primary", "withdrawn-relayed", "withdrawn-non-ascii", "withdrawn-max-length"];
+const IDS: [&str; 4] = ["withdrawn-primary", "withdrawn-relayed", "withdrawn-non-ascii", "withdrawn-max-length"];
 
 const T0: &str = "2024-03-10T12:00:00.000000Z";
 const TW: &str = "2024-03-15T16:00:00.000000Z"; // the withdrawals' tx
@@ -153,7 +152,13 @@ fn world(vector_id: &str) -> X {
     let key = SigningKey::from_seed(&seed);
     // The vector's key document is rates.example.org's (the withdrawal is signed with it).
     let body = stored.get("keys").and_then(|k| k.get(RATES)).and_then(|k| k.get("https")).unwrap();
-    w.store.put_namespace(RATES, body.get("body").and_then(Value::as_str).unwrap().as_bytes(), "2024-01-01T00:00:00.000000Z").unwrap();
+    w.store
+        .put_namespace(
+            RATES,
+            body.get("body").and_then(Value::as_str).unwrap().as_bytes(),
+            "2024-01-01T00:00:00.000000Z",
+        )
+        .unwrap();
     let descriptor = stored.get("recompute").and_then(|r| r.get("descriptor")).unwrap().to_jcs();
     let h = w.store.put_descriptor(&descriptor).unwrap();
     assert_eq!(h, base.cell().fn_hash, "the vectors' function");

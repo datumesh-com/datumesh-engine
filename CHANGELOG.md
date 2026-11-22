@@ -37,7 +37,7 @@ On `datumesh-store` 0.6.0 and `datumesh-core` 0.3.13.
   against valued siblings: the answer and its reason, supersession of a memoised answer, a later
   valued version, the single-cell read, `otherwise`, slices (count, sum, lineage) and `at`.
 
-## 0.5.0 (unreleased)
+## 0.5.0
 
 Build 2 Part 3 of the engine: scenarios (`whatif`), the solver, cycle paths, and deep recursion
 that splits itself (Build 2 E1-E4). On `datumesh-store` 0.5.0 (was 0.4.1; the store adds only).

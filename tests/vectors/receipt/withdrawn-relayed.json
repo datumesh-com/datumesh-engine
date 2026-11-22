@@ -1,0 +1,30 @@
+{
+  "id": "receipt/withdrawn-relayed",
+  "kind": "receipt",
+  "description": "spec-0.7.0: A withdrawal with `source`: the publisher withdraws a value it had taken from another party, and the receipt verifies like any stored one.",
+  "valid": true,
+  "input": "{\n  \"sig\": \"f795b8eabfbdb12ca84c2e57c5d8109df1237a5251e12ee750c63a0bfd3feabdf0d288bcc55a1b2c1dd0663ff648b120a767a91c19a1867b5e33e48584d1140f\",\n  \"source\": {\n    \"takeover\": \"https://bank.example.com/publish/takeover\",\n    \"sha256\": \"d5e717a59f2eec019933e7fcd49ea73a2d332f09267a8f35c0c0baef07376901\",\n    \"retrieved\": \"2024-03-15T15:30:00.000000Z\",\n    \"url\": \"https://bank.example.com/reference/rates.xml\",\n    \"name\": \"bank.example.com\"\n  },\n  \"withdrawn\": \"The 15 March 2024 reference rate was published in error and is withdrawn.\",\n  \"valid\": {\n    \"date\": {\n      \"value\": \"2024-03-15\",\n      \"type\": \"date\"\n    }\n  },\n  \"tx\": \"2024-03-15T16:00:00.000000Z\",\n  \"summary\": \"The EUR/USD reference rate for 15 March 2024 is withdrawn, as relayed from bank.example.com.\",\n  \"publisher\": \"rates.example.org\",\n  \"proto\": \"datumesh/1\",\n  \"licence\": \"CC-BY-4.0\",\n  \"issued\": \"2024-03-16T09:00:00.000000Z\",\n  \"inputs\": [],\n  \"computed_by\": \"rates.example.org#d712b32a2cc5cb7c\",\n  \"cell\": {\n    \"ns\": \"rates.example.org\",\n    \"fn_hash\": \"7b58ecb8fd23b644c87951d0bd609790ff547cbb23fed27186c669ce2ce0aa80\",\n    \"fn\": \"fx_rate\",\n    \"args\": {\n      \"quote\": {\n        \"value\": \"USD\",\n        \"type\": \"string\"\n      },\n      \"date\": {\n        \"value\": \"2024-03-15\",\n        \"type\": \"date\"\n      },\n      \"base\": {\n        \"value\": \"EUR\",\n        \"type\": \"string\"\n      }\n    }\n  },\n  \"asof\": \"2024-03-16T09:00:00.000000Z\"\n}",
+  "canonical": "{\"asof\":\"2024-03-16T09:00:00.000000Z\",\"cell\":{\"args\":{\"base\":{\"type\":\"string\",\"value\":\"EUR\"},\"date\":{\"type\":\"date\",\"value\":\"2024-03-15\"},\"quote\":{\"type\":\"string\",\"value\":\"USD\"}},\"fn\":\"fx_rate\",\"fn_hash\":\"7b58ecb8fd23b644c87951d0bd609790ff547cbb23fed27186c669ce2ce0aa80\",\"ns\":\"rates.example.org\"},\"computed_by\":\"rates.example.org#d712b32a2cc5cb7c\",\"inputs\":[],\"issued\":\"2024-03-16T09:00:00.000000Z\",\"licence\":\"CC-BY-4.0\",\"proto\":\"datumesh/1\",\"publisher\":\"rates.example.org\",\"source\":{\"name\":\"bank.example.com\",\"retrieved\":\"2024-03-15T15:30:00.000000Z\",\"sha256\":\"d5e717a59f2eec019933e7fcd49ea73a2d332f09267a8f35c0c0baef07376901\",\"takeover\":\"https://bank.example.com/publish/takeover\",\"url\":\"https://bank.example.com/reference/rates.xml\"},\"summary\":\"The EUR/USD reference rate for 15 March 2024 is withdrawn, as relayed from bank.example.com.\",\"tx\":\"2024-03-15T16:00:00.000000Z\",\"valid\":{\"date\":{\"type\":\"date\",\"value\":\"2024-03-15\"}},\"withdrawn\":\"The 15 March 2024 reference rate was published in error and is withdrawn.\"}",
+  "sha256": "efbb7bb37cd8d6b39b9bc2d40ebe91fd446cb93ee78cc8534a93fb86af85354a",
+  "sig": "f795b8eabfbdb12ca84c2e57c5d8109df1237a5251e12ee750c63a0bfd3feabdf0d288bcc55a1b2c1dd0663ff648b120a767a91c19a1867b5e33e48584d1140f",
+  "level": "signed",
+  "keypair": {
+    "seed": "d939265c141c467e77fb079486a3bb8b932c1d471c8c25e5a2eed06c42db8ad0",
+    "public": "843baeb22bfd0364fb1b7262b367fb3202e7886c69a070fecf8e343fedb1eabf",
+    "key_id": "d712b32a2cc5cb7c"
+  },
+  "keys": {
+    "rates.example.org": {
+      "https": {
+        "status": 200,
+        "body": "{\n  \"host\": \"rates.example.org\",\n  \"keys\": [\n    {\n      \"alg\": \"ed25519\",\n      \"id\": \"d712b32a2cc5cb7c\",\n      \"public\": \"843baeb22bfd0364fb1b7262b367fb3202e7886c69a070fecf8e343fedb1eabf\",\n      \"valid_from\": \"2020-01-01T00:00:00.000000Z\",\n      \"valid_to\": \"2024-06-01T00:00:00.000000Z\"\n    },\n    {\n      \"alg\": \"ed25519\",\n      \"id\": \"d9a2df65559c4444\",\n      \"public\": \"3ecf7b3ff834cb6782f5405dfcb213b5e78c0f30188068c25568adc25a739b52\",\n      \"valid_from\": \"2024-06-01T00:00:00.000000Z\"\n    }\n  ],\n  \"proto\": \"datumesh/1\"\n}"
+      }
+    },
+    "calc.example.net": {
+      "https": {
+        "status": 200,
+        "body": "{\n  \"host\": \"calc.example.net\",\n  \"keys\": [\n    {\n      \"alg\": \"ed25519\",\n      \"id\": \"f7ec60a92abf4774\",\n      \"public\": \"ccd4faa3a0b8338bc796d3bfc30bda2f6e87d336a576b70dc9d47cbfe0e8830f\",\n      \"valid_from\": \"2020-01-01T00:00:00.000000Z\"\n    }\n  ],\n  \"proto\": \"datumesh/1\"\n}"
+      }
+    }
+  }
+}

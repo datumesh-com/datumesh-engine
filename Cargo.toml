@@ -1,6 +1,6 @@
 [package]
 name = "datumesh-engine"
-version = "0.5.0"
+version = "0.6.0"
 description = "The Datumesh engine: the value of a cell as of a time, from stored receipts or by evaluating functions; memoised, and signed for computed cells."
 edition = "2021"
 rust-version = "1.97"
@@ -23,12 +23,12 @@ native-test = []
 sqlite = ["datumesh-store/sqlite"]
 
 [dependencies]
-datumesh-core = { version = "0.3.8", features = ["sign"] }
-datumesh-store = { version = "0.5.0", default-features = false }
+datumesh-core = { version = "0.3.13", features = ["sign"] }
+datumesh-store = { version = "0.6.0", default-features = false }
 tracing = "0.1.44"
 
 [dev-dependencies]
-datumesh-core = { version = "0.3.8", features = ["sign", "testkit"] }
+datumesh-core = { version = "0.3.13", features = ["sign", "testkit"] }
 
 [[example]]
 name = "bench"

@@ -42,9 +42,7 @@ fn world() -> World {
     w.native_fn(TOTAL, &[TEMP], &[("region", STR)], move |c, i, _| {
         Ok(sum(members(c, i)?.iter().map(|m| &m.input.value)))
     });
-    w.native_fn(COUNT, &[TEMP], &[("region", STR)], move |c, i, _| {
-        Ok(num(&members(c, i)?.len().to_string()))
-    });
+    w.native_fn(COUNT, &[TEMP], &[("region", STR)], move |c, i, _| Ok(num(&members(c, i)?.len().to_string())));
     w.native_fn(MEAN, &[TEMP], &[("region", STR)], move |c, i, _| {
         let ms = members(c, i)?;
         if ms.is_empty() {
@@ -148,10 +146,8 @@ fn a_member_that_is_not_a_cell_of_the_slice_is_refused() {
     let o = Overrides::new().slice_members(north(&w), vec![(other, num("1"))]);
     assert_eq!(code(ask(&e, &w, TOTAL, o)), "E_SLICE_MEMBER");
     // The same member twice.
-    let o = Overrides::new().slice_members(
-        north(&w),
-        vec![(temp(&w, "north", "a"), num("1")), (temp(&w, "north", "a"), num("2"))],
-    );
+    let o = Overrides::new()
+        .slice_members(north(&w), vec![(temp(&w, "north", "a"), num("1")), (temp(&w, "north", "a"), num("2"))]);
     assert_eq!(code(ask(&e, &w, TOTAL, o)), "E_SLICE_MEMBER");
 }
 

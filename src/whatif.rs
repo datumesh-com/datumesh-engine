@@ -371,7 +371,7 @@ impl Engine {
         match req.scope_run(target.clone(), desc.clone())? {
             Done::Value(a) => Ok(a.value.clone()),
             Done::Fault(f) => Err(EngineError::NotCovered { fault: Some(f.fault) }),
-            Done::NotCovered | Done::Unsigned(..) => Err(EngineError::NotCovered { fault: None }),
+            Done::NotCovered | Done::Unsigned(..) | Done::Withdrawn(_) => Err(EngineError::NotCovered { fault: None }),
         }
     }
 

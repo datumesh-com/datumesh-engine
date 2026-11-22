@@ -45,6 +45,17 @@ pub enum Answer {
         /// The evaluation fault, if the cell has no value because of one.
         fault: Option<Fault>,
     },
+    /// The cell is withdrawn as of A (SPEC 8.1, store 0.6.0): a stored cell whose latest
+    /// version as of A is a withdrawal. It has no value, and no receipt of one: `receipt` is
+    /// the withdrawal's canonical bytes (as `Resolver::receipt` gives them for its hash) and
+    /// `reason` its `withdrawn` text. Since 0.6.0. A formula reading the cell alone has no
+    /// value of it ([`NotCovered`](Answer::NotCovered)), and nothing is stored for the read.
+    Withdrawn {
+        /// The withdrawal's canonical bytes.
+        receipt: Vec<u8>,
+        /// The reason: the withdrawal's `withdrawn` member.
+        reason: String,
+    },
 }
 
 impl Answer {
@@ -393,6 +404,7 @@ impl Engine {
         Ok(match done {
             Done::Value(ans) => Answer::Receipt(ans.bytes.to_vec()),
             Done::Fault(fa) => Answer::NotCovered { fault: Some(fa.fault) },
+            Done::Withdrawn(w) => Answer::Withdrawn { receipt: w.bytes.to_vec(), reason: w.reason.clone() },
             Done::NotCovered | Done::Unsigned(..) => Answer::NOT_COVERED,
         })
     }
@@ -481,7 +493,7 @@ impl Engine {
         Ok(match done {
             Done::Value(ans) => Some(Evaluation::new(ans.value.clone())),
             Done::Unsigned(v, lineage) => Some(Evaluation::with_lineage(v, lineage)),
-            Done::NotCovered | Done::Fault(_) => None,
+            Done::NotCovered | Done::Fault(_) | Done::Withdrawn(_) => None,
         })
     }
 
@@ -521,6 +533,9 @@ impl Engine {
                 .latest(cell_id)
                 .ok()
                 .flatten()
+                // A withdrawal is no `Receipt` (it has no value): none is read for it, and
+                // every slice reader is dropped.
+                .filter(|v| !v.withdrawn)
                 .and_then(|v| self.store.receipt(&v.receipt_hash).map(|b| b.into_owned()))
                 .and_then(|b| datumesh_core::Receipt::from_json(&b).ok())
                 .map(Arc::new)

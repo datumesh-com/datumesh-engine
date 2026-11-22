@@ -252,6 +252,7 @@
 //! |---|---|---|
 //! | `Ok(Answer::Receipt(bytes))` | the receipt answering as of A (`asof <= A`) | `ok`; `trust` `primary` when the host of `computed_by` is the host of `cell.ns` and `inputs` is empty, `verified` for a receipt the engine computed |
 //! | `Ok(Answer::NotCovered { fault: None })` | the name has no binding as of A, the function hash is unknown, a stored cell has no version answering as of A, or a computed cell read an input with none | `not_covered` |
+//! | `Ok(Answer::Withdrawn { receipt, reason })` | a stored cell whose latest version as of A is a withdrawal (8.1; since 0.6.0): no value, the withdrawal's bytes and reason | `not_covered` with the `withdrawn` member |
 //! | `Ok(Answer::NotCovered { fault: Some(f) })` | the cell's evaluation faulted (SPEC 15.12): it has no value, deterministically | `not_covered`, `fault` = `f.as_str()` (`E_FORMULA_DIV_ZERO`, ...) |
 //! | `Err(Invalid(e))` | a malformed request (asof, slice, arguments against the signature) | `bad_request`, `error` = `e.code()` |
 //! | `Err(NameUnresolved { .. })` | an input's name has no binding as of A | `error`, `E_FN_UNAVAILABLE` |

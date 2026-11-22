@@ -2,6 +2,41 @@
 
 All notable changes to `datumesh-engine`.
 
+## 0.6.0 (unreleased)
+
+Withdrawals (CONTRACT-round-0.7 R1; SPEC 3.6, 8.1, 15.11-15.13 of spec-0.7.0): a stored cell whose
+latest version as of the asof is a withdrawal (the null version, `Version.withdrawn`) has no value.
+On `datumesh-store` 0.6.0 and `datumesh-core` 0.3.13.
+
+### Added
+
+- `Answer::Withdrawn { receipt, reason }`: `get` and `get_cell` of such a stored cell answer it.
+  `receipt` is the withdrawal's canonical bytes (what `Resolver::receipt` gives for its hash),
+  `reason` its `withdrawn` text, read with core's `Withdrawal` (never `Receipt::from_json`). The
+  HTTP layer answers `not_covered` with the `withdrawn` member.
+
+### Changed
+
+- A formula's single-cell read of a withdrawn cell is `EvalError::InputNotCovered`, as for a cell
+  with no receipt: the reader answers `NotCovered` (not `Withdrawn`: the withdrawal is the
+  input's), `otherwise` does not catch it, and nothing is stored for the read.
+- A slice leaves a withdrawn cell out of its members and its manifest (the store's
+  `slice_values`); a formula's `at(...)` of it is `E_FORMULA_ABSENT`, which `otherwise` catches.
+- Nothing is memoised for a withdrawn read. A withdrawal stored after a memoised answer
+  supersedes it from its own asof (`stored_version_added` drops the cell's answers and every
+  slice reader); a later valued version ends the withdrawal.
+- `Resolver::evaluate` and `whatif` answer no value for a withdrawn cell.
+
+### Dependencies
+
+- `datumesh-store` 0.6.0 (was 0.5.0), `datumesh-core` 0.3.13 (was 0.3.8).
+
+### Tests
+
+- `tests/engine_060_withdrawal.rs`: the four signed withdrawal vectors (`tests/vectors/receipt/`)
+  against valued siblings: the answer and its reason, supersession of a memoised answer, a later
+  valued version, the single-cell read, `otherwise`, slices (count, sum, lineage) and `at`.
+
 ## 0.5.0 (unreleased)
 
 Build 2 Part 3 of the engine: scenarios (`whatif`), the solver, cycle paths, and deep recursion

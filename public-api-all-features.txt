@@ -21,6 +21,9 @@ pub type datumesh_engine::native_test::NativeFn = (dyn core::ops::function::Fn(&
 pub datumesh_engine::Answer::NotCovered
 pub datumesh_engine::Answer::NotCovered::fault: core::option::Option<datumesh_core::envelope::Fault>
 pub datumesh_engine::Answer::Receipt(alloc::vec::Vec<u8>)
+pub datumesh_engine::Answer::Withdrawn
+pub datumesh_engine::Answer::Withdrawn::reason: alloc::string::String
+pub datumesh_engine::Answer::Withdrawn::receipt: alloc::vec::Vec<u8>
 impl datumesh_engine::Answer
 pub const datumesh_engine::Answer::NOT_COVERED: datumesh_engine::Answer
 impl core::clone::Clone for datumesh_engine::Answer

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use datumesh_core::{
     inherit_licence, lexical, Arg, Args, Cell, Declarations, Error as CoreError, ErrorCode, Fault, FunctionDescriptor,
-    Inheritance, KeyDocument, LicenceReason, Manifest, Receipt, ReceiptBuilder, Scalar, Slice,
+    Inheritance, KeyDocument, LicenceReason, Manifest, Receipt, ReceiptBuilder, Scalar, Slice, Withdrawal,
 };
 
 use crate::cache::Parsed;
@@ -207,6 +207,15 @@ pub(crate) enum Done {
     /// The top cell evaluated without a receipt (`Resolver::evaluation`), with the entries
     /// it read.
     Unsigned(Scalar, Vec<String>),
+    /// A stored cell withdrawn as of the asof (8.1): no value, with the withdrawal.
+    Withdrawn(Arc<Withdrawn>),
+}
+
+/// A withdrawal that answers a stored cell (store 0.6.0): its canonical bytes and reason.
+#[derive(Debug)]
+pub(crate) struct Withdrawn {
+    pub(crate) bytes: Arc<Vec<u8>>,
+    pub(crate) reason: String,
 }
 
 /// What looking a cell up gives.
@@ -571,6 +580,12 @@ impl<'e> Req<'e> {
     pub(crate) fn stored(&mut self, cell: &Cell, id: &str, asof: &str) -> Result<Done, EvalError> {
         let found = self.eng.store.stored_asof_with_receipt(id, asof).map_err(store_err("stored_asof"))?;
         let Some((v, bytes)) = found else { return Ok(Done::NotCovered) };
+        if v.withdrawn {
+            // The null version: no value, so no `Receipt`, and nothing the memo keeps (the
+            // next read asks the store again, and sees a later version as soon as it is stored).
+            let w = parse_withdrawal(&v.receipt_hash, &bytes).map_err(EvalError::Store)?;
+            return Ok(Done::Withdrawn(Arc::new(w)));
+        }
         let p = self.eng.parsed(&v.receipt_hash, &bytes).map_err(EvalError::Store)?;
         // The version answers from its asof (never earlier than its tx) until a version later
         // by tx answers: from that one's asof. Only the memo needs to know.
@@ -2092,7 +2107,7 @@ impl Reader<'_, '_> {
                 self.fault(&known, Some(fa.clone()));
                 Err(EvalError::Fault(fa.fault))
             }
-            Lookup::Ready(Done::NotCovered | Done::Unsigned(..)) => {
+            Lookup::Ready(Done::NotCovered | Done::Unsigned(..) | Done::Withdrawn(_)) => {
                 self.stop = Some(Stop::NotCovered);
                 Err(EvalError::InputNotCovered { cell_id: id })
             }
@@ -2363,6 +2378,24 @@ pub(crate) fn parse_stored(hash: &str, bytes: &[u8]) -> Result<Parsed, StoreErro
                 ErrorCode::InputInvalid,
                 "$",
                 format!("the store's receipt {hash} does not parse to that hash"),
+            )),
+        )),
+    }
+}
+
+/// Parses a withdrawal the store returned (its canonical bytes): its reason and canonical
+/// bytes, as the store gives them (`Withdrawal`, never a `Receipt`).
+pub(crate) fn parse_withdrawal(hash: &str, bytes: &[u8]) -> Result<Withdrawn, StoreError> {
+    match Withdrawal::from_json(bytes) {
+        Ok(w) if w.hash() == hash => {
+            Ok(Withdrawn { bytes: Arc::new(w.canonical().to_vec()), reason: w.withdrawn().to_string() })
+        }
+        Ok(_) | Err(_) => Err(StoreError::new(
+            "receipt",
+            datumesh_store::Error::Invalid(CoreError::new(
+                ErrorCode::InputInvalid,
+                "$",
+                format!("the store's withdrawal {hash} does not parse to that hash"),
             )),
         )),
     }

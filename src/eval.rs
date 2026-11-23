@@ -1148,6 +1148,8 @@ impl<'e> Req<'e> {
         let mut members = Vec::new();
         let mut member_ans = Vec::new();
         let (lo, hi, memo);
+        // The withdrawal that left a member out, as (tx, asof) (SPEC 8.2), when there is one.
+        let mut withdrawn_at: Option<(String, String)> = None;
         match (&spec, computed) {
             (Spec::Cells { pattern }, true) => {
                 let cells = extent_cells(fn_name, &fn_hash, &desc, pattern).map_err(EvalError::InvalidInput)?;
@@ -1232,7 +1234,15 @@ impl<'e> Req<'e> {
                     Spec::Versions { to, .. } => Some(to.clone()),
                     Spec::Cells { .. } => None,
                 };
-                lo = members.iter().map(|m| m.asof.clone()).chain(to).max();
+                // SPEC 8.2: a withdrawal that left a member out counts for the reader's time.
+                withdrawn_at =
+                    self.eng.store.slice_withdrawn_latest(&slice, asof).map_err(store_err("slice_withdrawn_latest"))?;
+                lo = members
+                    .iter()
+                    .map(|m| m.asof.clone())
+                    .chain(to)
+                    .chain(withdrawn_at.as_ref().map(|w| w.1.clone()))
+                    .max();
                 memo = true;
             }
         }
@@ -1246,7 +1256,7 @@ impl<'e> Req<'e> {
             fn_name: fn_name.to_string(),
             fn_hash,
             computed,
-            tx: members.iter().map(|m| m.tx.clone()).max(),
+            tx: members.iter().map(|m| m.tx.clone()).chain(withdrawn_at.as_ref().map(|w| w.0.clone())).max(),
             members,
             member_ans,
             lo,

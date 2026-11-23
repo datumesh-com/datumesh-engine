@@ -20,6 +20,12 @@ On `datumesh-store` 0.6.0 and `datumesh-core` 0.3.13.
   `members` with `add` or `remove` is `E_SLICE_MEMBER`, as is a member that is not a cell of the
   slice (by its function and arguments) or one given twice. `ScenarioOverride::Members { slice,
   members }` lists it, sorted by cell id and present even when empty. Nothing is written.
+- A withdrawal that left a slice member out counts for time (SPEC 8.2, spec-cr 4196c5a): a
+  computed receipt whose slice read left out a member because its latest version as of the
+  asof is a withdrawal has the withdrawal's `tx` among its candidates for `tx`, and the
+  withdrawal's `asof` among those for its `asof`. A read as of before that asof misses the
+  memo and recomputes the earlier value (the slice's members, with the withdrawn cell in).
+  Uses `Store::slice_withdrawn_latest` (store 0.6.0).
 
 ### Changed
 

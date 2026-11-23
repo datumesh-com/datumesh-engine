@@ -2,7 +2,7 @@
 
 All notable changes to `datumesh-engine`.
 
-## 0.6.0 (unreleased)
+## 0.6.0
 
 Withdrawals (CONTRACT-round-0.7 R1; SPEC 3.6, 8.1, 15.11-15.13 of spec-0.7.0): a stored cell whose
 latest version as of the asof is a withdrawal (the null version, `Version.withdrawn`) has no value.

@@ -21,9 +21,7 @@ mod common;
 
 use common::*;
 use datumesh_core::json::{self, Value};
-use datumesh_core::{
-    verify, Args, Cell, Level, Manifest, Receipt, ReceiptBuilder, Resolver, SigningKey, Withdrawal,
-};
+use datumesh_core::{verify, Args, Cell, Level, Manifest, Receipt, ReceiptBuilder, Resolver, SigningKey, Withdrawal};
 
 const FXR: &str = "rates.example.org/fx_rate";
 const TOTAL: &str = "calc.example.net/total";
@@ -106,22 +104,35 @@ fn world() -> X {
     let stored = vector("stored-number");
     let base = Receipt::from_json(stored.get("input").and_then(Value::as_str).unwrap().as_bytes()).unwrap();
     let s = stored.get("keypair").and_then(|k| k.get("seed")).and_then(Value::as_str).unwrap();
-    let seed: [u8; 32] = (0..32).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<_>>().try_into().unwrap();
+    let seed: [u8; 32] =
+        (0..32).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<_>>().try_into().unwrap();
     let key = SigningKey::from_seed(&seed);
-    let key_doc = stored.get("keys").and_then(|k| k.get(RATES)).and_then(|k| k.get("https")).and_then(|h| h.get("body")).and_then(Value::as_str).unwrap().as_bytes().to_vec();
+    let key_doc = stored
+        .get("keys")
+        .and_then(|k| k.get(RATES))
+        .and_then(|k| k.get("https"))
+        .and_then(|h| h.get("body"))
+        .and_then(Value::as_str)
+        .unwrap()
+        .as_bytes()
+        .to_vec();
     w.store.put_namespace(RATES, &key_doc, "2024-01-01T00:00:00.000000Z").unwrap();
-    let h = w.store.put_descriptor(&stored.get("recompute").and_then(|r| r.get("descriptor")).unwrap().to_jcs()).unwrap();
+    let h =
+        w.store.put_descriptor(&stored.get("recompute").and_then(|r| r.get("descriptor")).unwrap().to_jcs()).unwrap();
     assert_eq!(h, base.cell().fn_hash);
     w.store.bind_name(FXR, &h, BIND_TX).unwrap();
     w.native_fn(TOTAL, &[FXR], &[("day", r#"{"type":"date","valid":false}"#)], |c, i, _| {
         let day = c.args["day"].scalar().unwrap().clone();
-        let ms = i.read_slice(FXR, &pattern(&[("base", bound(text("EUR"))), ("date", bound(day)), ("quote", open())]))?;
+        let ms =
+            i.read_slice(FXR, &pattern(&[("base", bound(text("EUR"))), ("date", bound(day)), ("quote", open())]))?;
         Ok(sum(ms.iter().map(|m| &m.input.value)))
     });
     let wbytes = vector("withdrawn-primary").get("input").and_then(Value::as_str).unwrap().as_bytes().to_vec();
     let wd = Withdrawal::from_json(&wbytes).unwrap();
     let x = X { w, base, key, key_doc, wbytes, wd };
-    for (d, q, v) in [(D15, "USD", "100"), (D15, "GBP", "85"), (D15, "JPY", "16000"), (D16, "GBP", "86"), (D16, "JPY", "16100")] {
+    for (d, q, v) in
+        [(D15, "USD", "100"), (D15, "GBP", "85"), (D15, "JPY", "16000"), (D16, "GBP", "86"), (D16, "JPY", "16100")]
+    {
         x.publish(d, q, v, T0);
     }
     x

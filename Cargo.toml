@@ -23,12 +23,12 @@ native-test = []
 sqlite = ["datumesh-store/sqlite"]
 
 [dependencies]
-datumesh-core = { version = "0.3.13", features = ["sign"] }
+datumesh-core = { version = "0.3.14", features = ["sign"] }
 datumesh-store = { version = "0.6.0", default-features = false }
 tracing = "0.1.44"
 
 [dev-dependencies]
-datumesh-core = { version = "0.3.13", features = ["sign", "testkit"] }
+datumesh-core = { version = "0.3.14", features = ["sign", "testkit"] }
 
 [[example]]
 name = "bench"

@@ -55,11 +55,7 @@ fn src(w: &World, i: usize) -> Cell {
 
 /// Inputs `src(0..)` with the given licences, values 1, 2, 3, ...
 fn publish(w: &World, licences: &[&str]) -> Vec<String> {
-    licences
-        .iter()
-        .enumerate()
-        .map(|(i, l)| w.publish_licensed(&src(w, i), &(i + 1).to_string(), T0, l))
-        .collect()
+    licences.iter().enumerate().map(|(i, l)| w.publish_licensed(&src(w, i), &(i + 1).to_string(), T0, l)).collect()
 }
 
 /// An engine on the unrooted host `local.invalid`, accepting `accepted`.

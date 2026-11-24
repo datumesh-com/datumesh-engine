@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use datumesh_core::{
     lexical, Cell, CellRef, Evaluation, Fault, FunctionDescriptor, KeyDoc, Resolver, Scalar, SigningKey,
@@ -80,6 +80,7 @@ pub struct EngineBuilder {
     pub(crate) licence: String,
     pub(crate) summary: Option<Arc<SummaryFn>>,
     pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) accepted: BTreeSet<String>,
 }
 
 impl EngineBuilder {
@@ -155,6 +156,16 @@ impl EngineBuilder {
         self
     }
 
+    /// The restricted licences this engine's operator has accepted (engine 0.6.1, E1). Used only
+    /// on an unrooted host (`*.invalid`): when SPEC 8.5 refuses a computation over restricted
+    /// input licences and every one of them is accepted, the result is computed (see the crate
+    /// documentation, "Local acceptance"). On a rooted host the set is ignored. Replaces the
+    /// set given before; [`Engine::set_accepted_licences`] changes it later.
+    pub fn accepted_licences(mut self, licences: impl IntoIterator<Item = String>) -> Self {
+        self.accepted = licences.into_iter().collect();
+        self
+    }
+
     /// Checks the configuration and builds the engine.
     pub fn build(self) -> Result<Engine, ConfigError> {
         lexical::check_dns_name(&self.host, "$.host").map_err(ConfigError::Host)?;
@@ -196,6 +207,7 @@ impl EngineBuilder {
             licence: self.licence,
             summary: self.summary,
             clock: self.clock,
+            accepted: RwLock::new(self.accepted),
             memo: Memo::new(self.memo_capacity),
             descriptors: Cache::new(DESCRIPTOR_CACHE),
             receipts: Cache::new(RECEIPT_CACHE),
@@ -223,6 +235,9 @@ pub struct Engine {
     pub(crate) licence: String,
     pub(crate) summary: Option<Arc<SummaryFn>>,
     pub(crate) clock: Arc<dyn Clock>,
+    /// The accepted restricted licences (E1), read by every licence decision and replaced by
+    /// [`Engine::set_accepted_licences`].
+    pub(crate) accepted: RwLock<BTreeSet<String>>,
     pub(crate) memo: Memo,
     /// Parsed descriptors by function hash (immutable: content-addressed).
     pub(crate) descriptors: Cache<Arc<FunctionDescriptor>>,
@@ -312,6 +327,22 @@ impl Engine {
             licence: "CC-BY-4.0".into(),
             summary: None,
             clock: Arc::new(SystemClock),
+            accepted: BTreeSet::new(),
+        }
+    }
+
+    /// Replaces the set of accepted restricted licences (engine 0.6.1, E1), for the next
+    /// request: a long-running `serve` or `mcp` picks up an acceptance made by another process
+    /// this way. Safe to call from any thread. It waits for a running evaluation to finish, then
+    /// drops the memo (its answers were judged under the old set), so a memoised answer whose
+    /// licence the new set no longer gives is refused, not answered (see
+    /// [`EngineBuilder::accepted_licences`]).
+    pub fn set_accepted_licences(&self, licences: BTreeSet<String>) {
+        let _evaluating = self.evaluator.lock().unwrap_or_else(|p| p.into_inner());
+        let mut accepted = self.accepted.write().unwrap_or_else(|p| p.into_inner());
+        if *accepted != licences {
+            *accepted = licences;
+            self.memo.clear();
         }
     }
 

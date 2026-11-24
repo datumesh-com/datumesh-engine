@@ -2,6 +2,48 @@
 
 All notable changes to `datumesh-engine`.
 
+## 0.6.1
+
+Local acceptance of restricted licences (CONTRACT-protocol-part1, E1; DECISIONS-round-protocol D4,
+D4.1, D4.2). Nothing changes on a rooted host. On an unrooted host a refusal over restricted input
+licences is now `EngineError::NotAccepted` where it was `Unlicensed` (the refusal itself is the same),
+and the acceptance can compute it.
+
+### Added
+
+- `EngineBuilder::accepted_licences(impl IntoIterator<Item = String>)`: the restricted licences the
+  operator has accepted. Replaces a set given before.
+- `Engine::set_accepted_licences(&self, BTreeSet<String>)`: replaces the set for the next request,
+  from any thread. It waits for a running evaluation, then drops the memo when the set changes, so
+  a memoised answer is judged under the new set. A long-running `serve` or `mcp` picks up an
+  acceptance made by another process this way.
+- `pub const LOCAL_DERIVATION_LICENCE: &str = "LicenseRef-datumesh-local-derivation"`, re-exported
+  at the crate root.
+- `EngineError::NotAccepted { cell_id, licences }`: a refusal for a missing acceptance, with the
+  restricted input licences not accepted, sorted and each once. Display names them.
+
+### Rule
+
+On an unrooted engine host (`*.invalid`) only, when SPEC 8.5 refuses with `not_declared`,
+`declaration_not_open` or `restricted_conflict`, and every restricted input licence is accepted:
+one distinct restricted licence gives that licence, two or more give `LOCAL_DERIVATION_LICENCE`.
+Open inputs alongside do not change this; a share-alike conflict still refuses. The lineage keeps
+every input receipt. A restricted licence not accepted gives `NotAccepted`; a rooted host keeps
+`Unlicensed`. Applies to `get`, scoped evaluation (`whatif`) and memo reuse alike.
+
+"Restricted" is anything outside SPEC 8.5's open tiers. Core keeps the tiers private, so the
+engine carries its own list (`CC0-1.0`, `PDDL-1.0`, `MIT`, `Apache-2.0`, `CC-BY-4.0`, `OGL-UK-3.0`,
+`CC-BY-SA-4.0`, `ODbL-1.0`, and `public:<https URL>`). A unit test checks that core gives each
+open identifier, alone, a licence (not a refusal); a change to core's tiers needs this list to
+follow.
+
+### Notes
+
+- A receipt signed under acceptance verifies at level `signed`, and recomputes at level
+  `recomputed`, with the engine's own key.
+- `EngineError` is non-exhaustive and gains a variant; `Unlicensed` keeps its shape. Code that
+  matches `Unlicensed` on an unrooted host must also handle `NotAccepted`.
+
 ## 0.6.0
 
 Withdrawals (CONTRACT-round-0.7 R1; SPEC 3.6, 8.1, 15.11-15.13 of spec-0.7.0): a stored cell whose

@@ -71,7 +71,27 @@
 //! A refusal (`share_alike_conflict`, `restricted_conflict`, `not_declared`,
 //! `declaration_not_open`) is [`EngineError::Unlicensed`], with the refused cell and the
 //! reason: nothing is signed or stored for the request, and a cell that reads a refused cell
-//! is refused too (the same error). The HTTP layer answers `unlicensed` (403).
+//! is refused too (the same error). The HTTP layer answers `unlicensed` (403). Since 0.6.1 the
+//! local acceptance below may apply first.
+//!
+//! # Local acceptance (since 0.6.1)
+//!
+//! On an unrooted engine host (`*.invalid`, SPEC 2.5) only, a refusal of `not_declared`,
+//! `declaration_not_open` or `restricted_conflict` is overridden when every restricted input
+//! licence is accepted ([`EngineBuilder::accepted_licences`], [`Engine::set_accepted_licences`]).
+//! The cell is then computed under the one restricted licence, or under
+//! [`LOCAL_DERIVATION_LICENCE`] when there are two or more distinct ones. "Restricted" is
+//! anything outside SPEC 8.5's open tiers, an https URL included (the open identifiers are
+//! listed in the engine's own copy, checked against core's rule by its unit tests). Open inputs
+//! alongside do not change this; a share-alike conflict still refuses. The lineage keeps every
+//! input receipt, so the inputs' own licences stay readable.
+//!
+//! A restricted licence not accepted is [`EngineError::NotAccepted`], naming the licences (sorted),
+//! and nothing is signed or stored. On a rooted host, and where the acceptance does not apply, the
+//! refusal is `Unlicensed` as before. The rule is judged on every request, including reuse of a
+//! memoised answer; a change of the accepted set drops the memo. A receipt signed under
+//! acceptance verifies with the engine's key, at level `signed`, and recomputes at level
+//! `recomputed` (verification never applies the rule, SPEC 8.5).
 //!
 //! A computed version from the store (or the memo) is reused only while its licence is
 //! allowed: the rule over the input licences now read, judged at the version's own `issued`
@@ -259,6 +279,7 @@
 //! | `Err(UndeclaredInput { .. })` | a function read a name it does not declare | `error`, `E_INPUT_UNDECLARED` |
 //! | `Err(NoRuntime { .. })`, `Runtime`, `Cycle`, `DepthExceeded`, `BudgetExceeded`, `WorkExceeded`, `BlobUnavailable` | the mesh could not evaluate the function | `error`, `E_EVAL_UNAVAILABLE` (or `stale` with an earlier receipt; never for an asof-dependent cell's receipt of another asof) |
 //! | `Err(Unlicensed { .. })` | licence inheritance refuses the cell, or a cell it reads (SPEC 8.5; since 0.4.1) | `unlicensed` (403) |
+//! | `Err(NotAccepted { .. })` | an unrooted host would compute the cell over restricted input licences not accepted (since 0.6.1) | the embedding decides how to answer it |
 //! | `Err(Sign(e))` | an input's `asof` is later than the clock (`E_TIME_ORDER`) | `error`, `E_TIME_ORDER` |
 //! | `Err(Store(e))` | the store failed | `error`, `E_INPUT_UNAVAILABLE` (or `stale`) |
 //!
@@ -302,6 +323,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod acceptance;
 mod cache;
 mod check;
 mod clock;
@@ -316,6 +338,7 @@ mod sign;
 mod slice;
 mod whatif;
 
+pub use acceptance::LOCAL_DERIVATION_LICENCE;
 pub use clock::{Clock, SystemClock};
 pub use engine::{
     Answer, Engine, EngineBuilder, MemoStats, SummaryFn, DEFAULT_DEPTH_LIMIT, DEFAULT_FUEL, DEFAULT_MEMO_CAPACITY,

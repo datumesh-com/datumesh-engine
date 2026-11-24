@@ -1,6 +1,6 @@
 [package]
 name = "datumesh-engine"
-version = "0.6.0"
+version = "0.6.1"
 description = "The Datumesh engine: the value of a cell as of a time, from stored receipts or by evaluating functions; memoised, and signed for computed cells."
 edition = "2021"
 rust-version = "1.97"
@@ -145,4 +145,8 @@ required-features = ["native-test"]
 
 [[test]]
 name = "engine_060_withdrawal_times"
+required-features = ["native-test"]
+
+[[test]]
+name = "engine_061_local_acceptance"
 required-features = ["native-test"]

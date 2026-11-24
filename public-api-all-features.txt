@@ -70,6 +70,9 @@ pub datumesh_engine::EngineError::NamespaceSuspended::suspended_at: alloc::strin
 pub datumesh_engine::EngineError::NoRuntime
 pub datumesh_engine::EngineError::NoRuntime::fn_hash: alloc::string::String
 pub datumesh_engine::EngineError::NoRuntime::lang: alloc::string::String
+pub datumesh_engine::EngineError::NotAccepted
+pub datumesh_engine::EngineError::NotAccepted::cell_id: alloc::string::String
+pub datumesh_engine::EngineError::NotAccepted::licences: alloc::vec::Vec<alloc::string::String>
 pub datumesh_engine::EngineError::NotCovered
 pub datumesh_engine::EngineError::NotCovered::fault: core::option::Option<datumesh_core::envelope::Fault>
 pub datumesh_engine::EngineError::Override(alloc::string::String)
@@ -180,6 +183,7 @@ pub fn datumesh_engine::Engine::get(&self, &datumesh_core::model::CellRef, core:
 pub fn datumesh_engine::Engine::get_cell(&self, &datumesh_core::model::Cell, core::option::Option<&str>) -> core::result::Result<datumesh_engine::Answer, datumesh_engine::EngineError>
 pub fn datumesh_engine::Engine::memo_stats(&self) -> datumesh_engine::MemoStats
 pub fn datumesh_engine::Engine::resolve(&self, &datumesh_core::model::CellRef, core::option::Option<&str>) -> core::result::Result<core::option::Option<datumesh_core::model::Cell>, datumesh_engine::EngineError>
+pub fn datumesh_engine::Engine::set_accepted_licences(&self, alloc::collections::btree::set::BTreeSet<alloc::string::String>)
 pub fn datumesh_engine::Engine::stored_version_added(&self, &str)
 impl datumesh_engine::Engine
 pub fn datumesh_engine::Engine::whatif(&self, &datumesh_core::model::CellRef, core::option::Option<&str>, &datumesh_engine::Overrides, core::option::Option<&datumesh_engine::Solve>) -> core::result::Result<datumesh_engine::ScenarioAnswer, datumesh_engine::EngineError>
@@ -193,6 +197,7 @@ pub fn datumesh_engine::Engine::manifest(&self, &str) -> core::option::Option<al
 pub fn datumesh_engine::Engine::receipt(&self, &str) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>
 pub struct datumesh_engine::EngineBuilder
 impl datumesh_engine::EngineBuilder
+pub fn datumesh_engine::EngineBuilder::accepted_licences(self, impl core::iter::traits::collect::IntoIterator<Item = alloc::string::String>) -> Self
 pub fn datumesh_engine::EngineBuilder::build(self) -> core::result::Result<datumesh_engine::Engine, datumesh_engine::ConfigError>
 pub fn datumesh_engine::EngineBuilder::clock(self, alloc::rcs::arc::Arc<dyn datumesh_engine::Clock>) -> Self
 pub fn datumesh_engine::EngineBuilder::depth_limit(self, usize) -> Self
@@ -328,6 +333,7 @@ pub const datumesh_engine::DEFAULT_DEPTH_LIMIT: usize
 pub const datumesh_engine::DEFAULT_FUEL: u64
 pub const datumesh_engine::DEFAULT_MEMO_CAPACITY: usize
 pub const datumesh_engine::DEFAULT_WORK_FACTOR: u64
+pub const datumesh_engine::LOCAL_DERIVATION_LICENCE: &str
 pub trait datumesh_engine::Clock: core::marker::Send + core::marker::Sync
 pub fn datumesh_engine::Clock::now(&self) -> alloc::string::String
 impl datumesh_engine::Clock for datumesh_engine::SystemClock

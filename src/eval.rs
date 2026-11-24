@@ -14,10 +14,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use datumesh_core::{
-    inherit_licence, lexical, Arg, Args, Cell, Declarations, Error as CoreError, ErrorCode, Fault, FunctionDescriptor,
-    Inheritance, KeyDocument, LicenceReason, Manifest, Receipt, ReceiptBuilder, Scalar, Slice, Withdrawal,
+    inherit_licence, is_unrooted, lexical, Arg, Args, Cell, Declarations, Error as CoreError, ErrorCode, Fault,
+    FunctionDescriptor, KeyDocument, LicenceReason, Manifest, Receipt, ReceiptBuilder, Scalar, Slice, Withdrawal,
 };
 
+use crate::acceptance::{decide, is_open, overridable, Rule, Verdict};
 use crate::cache::Parsed;
 use crate::check::{check_args, valid_args};
 use crate::engine::{Engine, STORED};
@@ -1809,21 +1810,44 @@ impl<'e> Req<'e> {
     /// Licence inheritance (SPEC 8.5, core's `inherit_licence`) for frame `f`'s cell over the
     /// input licences `licences`, for a receipt issued at `issued`; `mesh_licence` for a cell
     /// with no input. The publisher's declarations are read only when the rule needs them (a
-    /// restricted input).
+    /// restricted input). Then the local acceptance rule (E1) applies to a refusal it may
+    /// override (`accept`).
     fn inherit(
         &mut self,
         f: &Frame,
         licences: &[String],
         issued: &str,
         mesh_licence: &str,
-    ) -> Result<Inheritance, EngineError> {
+    ) -> Result<Rule, EngineError> {
         let function = f.cell.function_name();
         let without = inherit_licence(licences, None, &function, issued, mesh_licence);
-        if !matches!(without.reason, LicenceReason::NotDeclared | LicenceReason::DeclarationNotOpen) {
-            return Ok(without);
+        let core = if matches!(without.reason, LicenceReason::NotDeclared | LicenceReason::DeclarationNotOpen) {
+            let d = self.declarations(&f.cell.ns)?;
+            inherit_licence(licences, d.as_deref(), &function, issued, mesh_licence)
+        } else {
+            without
+        };
+        self.accept(f, licences, Rule { licence: core.licence, reason: core.reason })
+    }
+
+    /// The local acceptance policy (engine 0.6.1, E1; D4.1): on an unrooted host, a refusal of
+    /// core over restricted input licences (`not_declared`, `declaration_not_open`,
+    /// `restricted_conflict`) is computed when every restricted input licence is accepted, under
+    /// the one licence or LOCAL_DERIVATION_LICENCE. Otherwise the refusal stands for a
+    /// rooted host, and `NotAccepted` names the restricted licences not accepted. The accepted
+    /// set is read now, so a memoised receipt is judged under the current set.
+    fn accept(&self, f: &Frame, licences: &[String], rule: Rule) -> Result<Rule, EngineError> {
+        if rule.licence.is_some() || !is_unrooted(&self.eng.host) || !overridable(rule.reason) {
+            return Ok(rule);
         }
-        let d = self.declarations(&f.cell.ns)?;
-        Ok(inherit_licence(licences, d.as_deref(), &function, issued, mesh_licence))
+        if licences.iter().all(|l| is_open(l)) {
+            return Ok(rule);
+        }
+        let accepted = self.eng.accepted.read().unwrap_or_else(|p| p.into_inner());
+        match decide(licences, &accepted) {
+            Verdict::Give(licence) => Ok(Rule { licence: Some(licence), reason: rule.reason }),
+            Verdict::Missing(licences) => Err(EngineError::NotAccepted { cell_id: f.id.clone(), licences }),
+        }
     }
 
     /// Whether receipt `r` of frame `f`'s cell may be reused over inputs with licences

@@ -263,6 +263,19 @@ pub enum EngineError {
         /// Why (never one of the reasons that give a licence).
         reason: datumesh_core::LicenceReason,
     },
+    /// On an unrooted host, licence inheritance would compute the cell over restricted input
+    /// licences, but some of them are not in the engine's accepted set (engine 0.6.1, E1; see
+    /// [`EngineBuilder::accepted_licences`](crate::EngineBuilder::accepted_licences)). Nothing
+    /// was signed or stored. `licences` are the restricted input licences not accepted, sorted,
+    /// each once. Only where core's refusal would be overridden by acceptance (`not_declared`,
+    /// `declaration_not_open`, `restricted_conflict`); a rooted host gives `Unlicensed` as
+    /// before. Since 0.6.1.
+    NotAccepted {
+        /// The cell the rule refused: as for `Unlicensed`.
+        cell_id: String,
+        /// The restricted licences not accepted.
+        licences: Vec<String>,
+    },
     /// A write the engine makes is under a suspended namespace (SPEC 9.9, store 0.4.1): the
     /// store refused it with [`datumesh_store::Error::NamespaceSuspended`], as the mesh's own
     /// namespace (the signer of its computed receipts) is suspended. Nothing was signed or
@@ -320,6 +333,11 @@ impl fmt::Display for EngineError {
             EngineError::Unlicensed { cell_id, reason } => {
                 write!(f, "licence inheritance refuses to compute cell {cell_id}: {reason}; nothing was stored")
             }
+            EngineError::NotAccepted { cell_id, licences } => write!(
+                f,
+                "licence inheritance refuses to compute cell {cell_id}: not accepted: {}; nothing was stored",
+                licences.join(", ")
+            ),
             EngineError::NamespaceSuspended { host, suspended_at } => {
                 write!(f, "the namespace {host} is suspended since {suspended_at}; nothing was signed or stored")
             }

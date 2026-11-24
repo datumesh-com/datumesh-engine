@@ -11,8 +11,9 @@
 //! rooted host it is ignored. When SPEC 8.5 refuses (`not_declared`, `declaration_not_open`, or a
 //! conflict of restricted licences) and every restricted input licence is accepted, the result
 //! carries the one restricted licence, or the LicenseRef when there are two or more distinct
-//! ones. A refusal for a missing acceptance is `EngineError::Unlicensed`; these tests assert on
-//! the licence strings appearing in the error, not on the reason variant.
+//! ones. A refusal for a missing acceptance is the additive `EngineError::NotAccepted { cell_id,
+//! licences }` (licences: the restricted ones not accepted, sorted); on a rooted host the
+//! refusal is today's `Unlicensed`, unchanged.
 
 mod common;
 
@@ -85,16 +86,21 @@ fn get(w: &World, e: &Engine, n: usize) -> Result<Answer, EngineError> {
     e.get(&w.cellref(CONVERT, &[("n", num(&n.to_string()))]), None)
 }
 
-/// A refusal for a licence that is not accepted: `Unlicensed`, naming every licence of `names`.
+/// A refusal for a missing acceptance: `EngineError::NotAccepted`, whose `licences` are exactly
+/// `names` (sorted).
 fn refused_naming(r: Result<Answer, EngineError>, names: &[&str]) {
+    let mut want: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+    want.sort();
     match r {
-        Err(e @ EngineError::Unlicensed { .. }) => {
-            let text = format!("{e} {e:?}");
+        Err(e @ EngineError::NotAccepted { .. }) => {
+            let shown = e.to_string();
+            let EngineError::NotAccepted { licences, .. } = e else { unreachable!() };
+            assert_eq!(licences, want);
             for n in names {
-                assert!(text.contains(n), "the refusal names {n}: {text}");
+                assert!(shown.contains(n), "Display names {n}: {shown}");
             }
         }
-        other => panic!("not unlicensed: {other:?}"),
+        other => panic!("not NotAccepted: {other:?}"),
     }
 }
 
@@ -210,16 +216,19 @@ fn whatif_over_two_accepted_inputs_computes_under_the_local_derivation_licence()
     assert_eq!(s.value, num("13"));
     // One of the two accepted: refused, naming the other.
     let e = local(&w, &[R1]);
-    match e.whatif(&target, None, &o, None) {
-        Err(err @ EngineError::Unlicensed { .. }) => {
-            let text = format!("{err} {err:?}");
-            assert!(text.contains(R2), "{text}");
+    let missing = |r: Result<_, EngineError>, want: &[&str]| match r {
+        Err(EngineError::NotAccepted { licences, .. }) => {
+            let mut w: Vec<String> = want.iter().map(|s| s.to_string()).collect();
+            w.sort();
+            assert_eq!(licences, w);
         }
-        other => panic!("{other:?}"),
-    }
-    // Nothing accepted: refused.
+        Ok(_) => panic!("computed"),
+        Err(other) => panic!("{other:?}"),
+    };
+    missing(e.whatif(&target, None, &o, None), &[R2]);
+    // Nothing accepted: refused, naming both.
     let e = local(&w, &[]);
-    assert!(matches!(e.whatif(&target, None, &o, None), Err(EngineError::Unlicensed { .. })));
+    missing(e.whatif(&target, None, &o, None), &[R1, R2]);
     // A rooted host ignores the policy.
     let e = w.engine_with(|b| b.accepted_licences(vec![R1.to_string(), R2.to_string()]));
     assert!(matches!(e.whatif(&target, None, &o, None), Err(EngineError::Unlicensed { .. })));

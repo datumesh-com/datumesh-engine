@@ -96,3 +96,54 @@ fn a_correction_recorded_later_answers_in_the_memo_from_its_recorded_time() {
     assert_eq!(value_of(&f.get(&level_ref(&w, "a"), Some(&t(13, 0))).unwrap()), num("100"));
 }
 
+// ---- Item 2: a current read while a writer waits ----------------------------------------------
+
+#[test]
+fn a_current_read_while_a_writer_waits_for_the_lock_verifies_after_the_commit() {
+    let w = recording_world();
+    w.clock.set(&t(10, 0));
+    w.publish(&level(&w, "a"), "100", &t(10, 0));
+    w.publish(&level(&w, "b"), "200", &t(10, 0));
+    // Another session holds the version lock; station c's writer waits behind it (clock: the 14th).
+    let mut holder = w.db().client();
+    let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let hold = std::thread::spawn(move || {
+        let mut t = holder.transaction().unwrap();
+        t.execute("SELECT pg_advisory_xact_lock($1)", &[&LOCK_KEY]).unwrap();
+        held_tx.send(()).unwrap();
+        let _ = release_rx.recv();
+        t.commit().unwrap();
+    });
+    held_rx.recv().unwrap();
+    w.clock.set(&t(14, 0));
+    let store = w.store.clone();
+    let c = level(&w, "c");
+    let bytes = w.sign_stored(&c, num("50"), &t(14, 0), &t(14, 0));
+    let writer = std::thread::spawn(move || {
+        let h = store.put_receipt(&bytes).unwrap();
+        store.put_version(&c.id(), &t(14, 0), &h).unwrap();
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    // A current read at the 16th, while the writer waits.
+    w.clock.set(&t(16, 0));
+    let engine = w.engine_with(mesh());
+    let reader = {
+        let e = engine.clone();
+        let f = flood(&w);
+        std::thread::spawn(move || e.get(&f, None).unwrap())
+    };
+    std::thread::sleep(Duration::from_millis(400));
+    release_tx.send(()).unwrap();
+    hold.join().unwrap();
+    writer.join().unwrap();
+    let a = reader.join().unwrap();
+    let r = receipt_of(&a);
+    // After the commit the receipt rebuilds to its hash and verifies at level recomputed.
+    let fresh = w.engine_with(mesh());
+    assert!(fresh.manifest(&r.inputs()[0]).is_some(), "its list rebuilds: {}", r.value().lexical());
+    let out = verify(&bytes_of(&a), &all_keys(), Some(&*fresh as &dyn Resolver), None);
+    assert!(out.ok, "{out:?}");
+    assert_eq!(out.level, Some(Level::Recomputed), "{out:?}");
+}
+

@@ -214,3 +214,27 @@ fn the_memo_bound_reads_only_the_next_version() {
     let rows = wire.take_rows();
     assert!(rows <= 10, "the bound reads the next version only, not the 111 after it: {rows} rows");
 }
+
+// ---- Second review (27 Nov), A1: the memo bound is the least later start ----------------------
+
+#[test]
+fn a_warmed_memo_ends_at_the_least_start_of_the_later_versions() {
+    // v1 at the 10th; v2 signed the 11th with asof the 20th (late-signed), recorded the 11th; v3 at
+    // the 12th. As of the 12th 06:00 v3 answers (3): v2 does not answer before its asof.
+    let w = World::new();
+    w.stored_fn(LEVEL, &[("d", DATE), ("station", STR)]);
+    let c = level(&w, "a");
+    w.publish(&c, "1", &t(10, 0));
+    w.publish_late(&c, "2", &t(11, 0), &t(20, 0));
+    w.publish(&c, "3", &t(12, 0));
+    let fresh = w.engine();
+    assert_eq!(value_of(&fresh.get(&level_ref(&w, "a"), Some(&t(12, 6))).unwrap()), num("3"));
+    // One engine, its memo warmed with v1 as of the 10th 06:00: as of the 12th 06:00 still 3.
+    let e = w.engine();
+    assert_eq!(value_of(&e.get(&level_ref(&w, "a"), Some(&t(10, 6))).unwrap()), num("1"));
+    assert_eq!(
+        value_of(&e.get(&level_ref(&w, "a"), Some(&t(12, 6))).unwrap()),
+        num("3"),
+        "v1's memo entry ends at v3's start (the least later start), not at the next version v2's asof"
+    );
+}

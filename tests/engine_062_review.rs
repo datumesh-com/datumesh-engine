@@ -186,3 +186,31 @@ fn a_rebuild_over_the_fuel_is_refused_without_loading_the_members_values() {
     assert!(rows <= 40, "the listing is bounded at fuel + 1 (10 + 1), not 300 members: {rows} rows");
 }
 
+// ---- Item 7: the memo bound reads only the next version --------------------------------------
+
+#[test]
+fn the_memo_bound_reads_only_the_next_version() {
+    let w = World::new();
+    w.stored_fn(LEVEL, &[("d", DATE), ("station", STR)]);
+    let c = level(&w, "a");
+    for d in 1..=28 {
+        for h in [0, 6, 12, 18] {
+            w.publish(&c, &format!("{d}{h}"), &format!("2024-02-{d:02}T{h:02}:00:00.000000Z"));
+        }
+    }
+    let wire = common::wire::Wire::start(&w.db().config);
+    let store: Arc<dyn datumesh_store::Store + Send + Sync> = Arc::new(wire.store());
+    let e = Engine::builder(store, MESH)
+        .signing_key(key_for(MESH))
+        .clock(Arc::new(w.clock.clone()))
+        .runtime(Arc::new(SharedNative(w.native.clone())))
+        .build()
+        .unwrap();
+    wire.take();
+    wire.take_rows();
+    // The first version answers; 111 versions follow it.
+    let a = e.get(&level_ref(&w, "a"), Some("2024-02-01T03:00:00.000000Z")).unwrap();
+    assert_eq!(value_of(&a), num("10"));
+    let rows = wire.take_rows();
+    assert!(rows <= 10, "the bound reads the next version only, not the 111 after it: {rows} rows");
+}

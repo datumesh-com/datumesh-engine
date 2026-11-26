@@ -21,6 +21,8 @@ type Counts = Arc<Mutex<BTreeMap<String, usize>>>;
 pub struct Wire {
     port: u16,
     counts: Counts,
+    /// The rows the server sent (DataRow messages), since the last `take_rows`.
+    rows: Arc<std::sync::atomic::AtomicUsize>,
     config: Config,
 }
 
@@ -36,24 +38,26 @@ impl Wire {
         let local = listener.local_addr().unwrap().port();
         let counts: Counts = Arc::default();
         let c = counts.clone();
+        let rows: Arc<std::sync::atomic::AtomicUsize> = Arc::default();
+        let rw = rows.clone();
         std::thread::spawn(move || {
             for client in listener.incoming() {
                 let Ok(client) = client else { continue };
                 let Ok(server) = TcpStream::connect((host.as_str(), port)) else { continue };
                 let (c2s_from, c2s_to) = (client.try_clone().unwrap(), server.try_clone().unwrap());
                 let counts = c.clone();
+                let rows = rw.clone();
                 std::thread::spawn(move || {
                     let _ = pump(c2s_from, &c2s_to, &counts);
                     let _ = c2s_to.shutdown(Shutdown::Write);
                 });
                 std::thread::spawn(move || {
-                    let (mut from, mut to) = (server, client);
-                    let _ = io::copy(&mut from, &mut to);
-                    let _ = to.shutdown(Shutdown::Write);
+                    let _ = pump_back(server, &client, &rows);
+                    let _ = client.shutdown(Shutdown::Write);
                 });
             }
         });
-        Wire { port: local, counts, config: config.clone() }
+        Wire { port: local, counts, rows, config: config.clone() }
     }
 
     /// A store on the same database whose connections go through the proxy.
@@ -80,6 +84,11 @@ impl Wire {
             PoolOptions::new(),
         )
         .unwrap()
+    }
+
+    /// The rows the server sent since the last `take_rows` (guard patch, review item 7).
+    pub fn take_rows(&self) -> usize {
+        self.rows.swap(0, std::sync::atomic::Ordering::SeqCst)
     }
 
     /// The statements executed since the last `take`, by SQL text (whitespace collapsed).
@@ -149,6 +158,35 @@ fn pump(from: TcpStream, to: &TcpStream, counts: &Counts) -> io::Result<()> {
             _ => {}
         }
         to.write_all(&head)?;
+        to.write_all(&body)?;
+    }
+}
+
+/// Forwards the server's messages to the client, counting the rows (DataRow, `D`). The first byte
+/// may be the one-byte answer to an SSL or GSS request (`N`); every later message is typed.
+fn pump_back(from: TcpStream, to: &TcpStream, rows: &std::sync::atomic::AtomicUsize) -> io::Result<()> {
+    let mut to = to;
+    let mut r = BufReader::new(from);
+    let mut first = true;
+    loop {
+        let mut t = [0u8; 1];
+        r.read_exact(&mut t)?;
+        if first && (t[0] == b'N' || t[0] == b'S') {
+            // An answer to the SSL or GSS request: one byte, nothing after it here.
+            to.write_all(&t)?;
+            first = false;
+            continue;
+        }
+        first = false;
+        let mut len = [0u8; 4];
+        r.read_exact(&mut len)?;
+        let mut body = vec![0u8; (u32::from_be_bytes(len) as usize).saturating_sub(4)];
+        r.read_exact(&mut body)?;
+        if t[0] == b'D' {
+            rows.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        to.write_all(&t)?;
+        to.write_all(&len)?;
         to.write_all(&body)?;
     }
 }

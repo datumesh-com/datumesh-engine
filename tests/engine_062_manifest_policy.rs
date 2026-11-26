@@ -373,6 +373,39 @@ fn a_new_member_after_the_rows_tx_makes_it_re_evaluate() {
 // A new member with an older signed time: engine_062_recorded.rs (G9), on a store that records at
 // its clock; without one the store records the signed time, as before migration 17.
 
+// ---- Current or past (decided 26 Nov, from the http implementation) --------------------------
+
+#[test]
+fn a_read_with_no_named_asof_is_current_however_late_it_is_evaluated() {
+    // "Past" means the request named an asof earlier than the mesh's clock at the request's
+    // arrival. A read with no asof (or a pending job finishing later) is current: it answers as of
+    // its arrival and stores, even when the clock reads later by the time it is evaluated.
+    // API assumed: Engine::get_cell_current(&self, cell: &Cell, arrival: &str) -> Result<Answer,
+    // EngineError>: the answer as of `arrival` (the request's arrival, which a caller pins), a current
+    // read whatever the clock reads when it is evaluated.
+    let w = world();
+    seed(&w);
+    let cell = w.cell(TOTAL, &[("region", text("north"))]);
+    let mesh = |b: datumesh_engine::EngineBuilder| b.manifests(ManifestPolicy::MemberSetOnly).store_past_reads(false);
+    let rows = |w: &World| (w.db().count("computed_versions"), w.db().count("member_sets"));
+    // The request arrives at the 20th; the evaluation reads the clock later.
+    w.clock.set(&t(20, 1));
+    let before = rows(&w);
+    let named = w.engine_with(mesh).get_cell(&cell, Some(&t(20, 0))).unwrap();
+    assert_eq!(receipt_of(&named).value(), &num("30"));
+    assert_eq!(rows(&w), before, "an asof named before the clock: a past read, nothing stored");
+    let cur = w.engine_with(mesh).get_cell_current(&cell, &t(20, 0)).unwrap();
+    let r = receipt_of(&cur);
+    assert_eq!(r.value(), &num("30"));
+    let after = rows(&w);
+    assert_eq!((after.0, after.1), (before.0 + 1, before.1 + 1), "a current read stores its version and row");
+    let row = w.store.member_set(&r.inputs()[0]).unwrap().expect("the row");
+    assert_eq!(row.asof, t(20, 0), "as of its arrival");
+    // A plain get with no asof is current too (as of the clock's now), and reuses what is stored.
+    w.clock.set(&t(20, 2));
+    assert_eq!(receipt_of(&w.engine_with(mesh).get_cell(&cell, None).unwrap()).hash(), r.hash());
+}
+
 // ---- G3 asks "inserted since" (decided 26 Nov): the slice's seq ----------------------------
 
 /// The slice a row is of.

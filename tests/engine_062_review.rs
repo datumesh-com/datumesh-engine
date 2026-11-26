@@ -147,3 +147,42 @@ fn a_current_read_while_a_writer_waits_for_the_lock_verifies_after_the_commit() 
     assert_eq!(out.level, Some(Level::Recomputed), "{out:?}");
 }
 
+// ---- Item 5: a rebuild over the fuel loads no member's value ----------------------------------
+
+#[test]
+fn a_rebuild_over_the_fuel_is_refused_without_loading_the_members_values() {
+    let w = recording_world();
+    w.clock.set(&t(10, 0));
+    for k in 0..300 {
+        w.publish(&level(&w, &format!("s{k:03}")), "1", &t(10, 0));
+    }
+    w.clock.set(&t(16, 0));
+    let r = receipt_of(&w.engine_with(mesh()).get(&flood(&w), Some(&t(15, 0))).unwrap());
+    let entry = r.inputs()[0].clone();
+    let wire = common::wire::Wire::start(&w.db().config);
+    let store: Arc<dyn datumesh_store::Store + Send + Sync> = Arc::new(wire.store());
+    let small: Engine = Engine::builder(store, MESH)
+        .signing_key(key_for(MESH))
+        .clock(Arc::new(w.clock.clone()))
+        .runtime(Arc::new(SharedNative(w.native.clone())))
+        .manifests(ManifestPolicy::MemberSetOnly)
+        .store_past_reads(false)
+        .fuel(10)
+        .build()
+        .unwrap();
+    wire.take();
+    wire.take_rows();
+    match small.manifest_asof(&entry, r.asof()) {
+        Err(EngineError::BudgetExceeded { .. }) => {}
+        other => panic!("over the fuel: {other:?}"),
+    }
+    let sql = wire.take();
+    let rows = wire.take_rows();
+    assert_eq!(
+        common::wire::matching(&sql, "ORDER BY a.name), c.sort_key"),
+        0,
+        "no member's value is loaded (a hash-only listing): {sql:#?}"
+    );
+    assert!(rows <= 40, "the listing is bounded at fuel + 1 (10 + 1), not 300 members: {rows} rows");
+}
+

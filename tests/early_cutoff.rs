@@ -194,7 +194,16 @@ fn after_a_cutoff_the_unchanged_readers_are_rechecked_from_memory() {
     // And the names: the top's, then each one read (p19 .. p1, the child, s), once each (each
     // binding comes with its start: no other name query).
     assert_eq!(common::wire::matching(&sql, "FROM name_bindings"), 22, "{sql:#?}");
-    assert_eq!(sql.values().sum::<usize>(), 25, "nothing else: {sql:#?}");
+    // The request's barrier (guard patch, review decision 2: Store::barrier once per request before its
+    // first store read): one shared lock taken and released, as two statements or folded into one.
+    assert_eq!(common::wire::matching(&sql, "pg_advisory_lock_shared"), 1, "one barrier, its lock: {sql:#?}");
+    assert_eq!(common::wire::matching(&sql, "pg_advisory_unlock_shared"), 1, "one barrier, its unlock: {sql:#?}");
+    let barrier: usize = sql
+        .iter()
+        .filter(|(q, _)| q.contains("pg_advisory_lock_shared") || q.contains("pg_advisory_unlock_shared"))
+        .map(|(_, n)| n)
+        .sum();
+    assert_eq!(sql.values().sum::<usize>() - barrier, 25, "nothing else: {sql:#?}");
     assert_eq!(e.memo_stats().stale, 0);
     w.verify_all_issued(&e, "early_cutoff_recheck");
 }

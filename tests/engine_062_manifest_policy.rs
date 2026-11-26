@@ -23,7 +23,10 @@
 //!
 //! // datumesh_store 0.6.5 (see the store's tests/store_065_member_sets.rs)
 //! pub struct MemberSet { pub entry, pub slice_id, pub members_hash, pub fn_hash, pub slice: Vec<u8>,
-//!                        pub members: u64, pub tx: Option<String>, pub asof: String }
+//!                        pub members: u64, pub tx: Option<String>, pub asof: String,
+//!                        pub licences: Vec<String> }  // the members' distinct licences, sorted
+//!                                                    // (decided 26 Nov); a scoped member counts
+//!                                                    // with the mesh's own licence
 //! fn put_member_set(&self, set: &MemberSet) -> Result<bool>;
 //! fn member_set(&self, entry: &str) -> Result<Option<MemberSet>>;
 //! ```
@@ -366,6 +369,86 @@ fn a_new_member_after_the_rows_tx_makes_it_re_evaluate() {
 
 // A new member with an older signed time: engine_062_recorded.rs (G9), on a store that records at
 // its clock; without one the store records the signed time, as before migration 17.
+
+// ---- G3 with licences (decided 26 Nov: the row carries its members' licences) ----------------
+
+const SRC: &str = "rates.example.org/src";
+const SRC_TOTAL: &str = "calc.example.net/src_total";
+const RESTRICTED: &str = "https://rates.example.org/licences/restricted";
+const LT0: &str = "2024-03-15T16:00:00.000000Z";
+
+/// src(i) stored, src_total() = the sum of src(*); src(0) under MIT, src(1) and src(2) under a
+/// restricted licence that calc.example.net declares for src_total from 2020 on; the clock at
+/// 2026-01-01.
+fn licensed_world() -> World {
+    let mut w = World::new();
+    w.stored_fn(SRC, &[("i", STR)]);
+    w.native_fn(SRC_TOTAL, &[SRC], &[], |_, i, _| {
+        let members = i.read_slice(SRC, &pattern(&[("i", open())]))?;
+        Ok(sum(members.iter().map(|m| &m.input.value)))
+    });
+    w.declare(CALC, &declaration(SRC_TOTAL, RESTRICTED, "2020-01-01T00:00:00.000000Z", None));
+    let src = |i: &str| w.cell(SRC, &[("i", text(i))]);
+    w.publish_licensed(&src("0"), "1", LT0, "MIT");
+    w.publish_licensed(&src("1"), "2", LT0, RESTRICTED);
+    w.publish_licensed(&src("2"), "3", LT0, RESTRICTED);
+    w.clock.set("2026-01-01T00:00:00.000000Z");
+    w
+}
+
+#[test]
+fn the_row_carries_the_members_licences_and_reuse_reads_no_member() {
+    for policy in [ManifestPolicy::MemberSetOnly, ManifestPolicy::Store] {
+        let w = licensed_world();
+        let total = w.cellref(SRC_TOTAL, &[]);
+        let first = receipt_of(&w.engine_with(with(policy)).get(&total, None).unwrap());
+        assert_eq!((first.value(), first.licence()), (&num("6"), RESTRICTED));
+        let row = w.store.member_set(&first.inputs()[0]).unwrap().expect("the row");
+        assert_eq!(row.licences, ["MIT", RESTRICTED], "{policy:?}: the members' licences, distinct and sorted");
+        // Entitled (declared): a second GET from a fresh engine is served with no member read.
+        let wire = common::wire::Wire::start(&w.db().config);
+        let e = counted(&w, &wire, policy);
+        wire.take();
+        let again = receipt_of(&e.get(&total, None).unwrap());
+        assert_eq!(again.hash(), first.hash(), "{policy:?}: the stored version stands");
+        let sql = wire.take();
+        assert_eq!(member_reads(&sql), 0, "{policy:?}: the licences come from the row: {sql:#?}");
+        assert_eq!(common::wire::matching(&sql, "INSERT"), 0, "{policy:?}: {sql:#?}");
+        assert_eq!(w.calls(SRC_TOTAL), 1, "{policy:?}");
+        // Not entitled: the publisher's key document no longer declares the licence (so the stored
+        // version is not entitled at its issued, and the rule refuses now): refused, still with no
+        // member read and nothing written.
+        w.declare(CALC, "{}");
+        let e = counted(&w, &wire, policy);
+        wire.take();
+        match e.get(&total, None) {
+            Err(datumesh_engine::EngineError::Unlicensed { reason, .. }) => {
+                assert_eq!(reason, datumesh_core::LicenceReason::NotDeclared, "{policy:?}")
+            }
+            other => panic!("{policy:?}: not entitled must be refused: {other:?}"),
+        }
+        let sql = wire.take();
+        assert_eq!(member_reads(&sql), 0, "{policy:?}: refused from the row's licences: {sql:#?}");
+        assert_eq!(common::wire::matching(&sql, "INSERT"), 0, "{policy:?}: {sql:#?}");
+    }
+}
+
+#[test]
+fn a_scenario_writes_no_row_and_leaves_the_rows_licences() {
+    // "A scoped member counts with the mesh's own licence": a scenario's members are the scoped
+    // ones, and a scenario stores nothing, so no row ever carries that licence; what is checked is
+    // that the scenario answers, writes no row, and leaves the stored row's licences as they were.
+    let w = licensed_world();
+    let total = w.cellref(SRC_TOTAL, &[]);
+    let first = receipt_of(&w.engine_with(with(ManifestPolicy::MemberSetOnly)).get(&total, None).unwrap());
+    let rows = w.db().count("member_sets");
+    let e = w.engine_with(with(ManifestPolicy::MemberSetOnly));
+    let o = Overrides::new().value(w.cellref(SRC, &[("i", text("1"))]), num("20"));
+    let a = e.whatif(&total, None, &o, None).unwrap();
+    assert_eq!(a.value, num("24"));
+    assert_eq!(w.db().count("member_sets"), rows, "a scenario writes no row");
+    assert_eq!(w.store.member_set(&first.inputs()[0]).unwrap().unwrap().licences, ["MIT", RESTRICTED]);
+}
 
 #[test]
 fn a_withdrawal_after_the_rows_tx_makes_it_re_evaluate() {

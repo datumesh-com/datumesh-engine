@@ -341,8 +341,8 @@ mod whatif;
 pub use acceptance::LOCAL_DERIVATION_LICENCE;
 pub use clock::{Clock, SystemClock};
 pub use engine::{
-    Answer, Engine, EngineBuilder, ManifestPolicy, MemoStats, SummaryFn, DEFAULT_DEPTH_LIMIT, DEFAULT_FUEL,
-    DEFAULT_MEMO_CAPACITY, DEFAULT_WORK_FACTOR,
+    Answer, Engine, EngineBuilder, ManifestPolicy, MemoStats, ReceiptResolver, SummaryFn, DEFAULT_DEPTH_LIMIT,
+    DEFAULT_FUEL, DEFAULT_MEMO_CAPACITY, DEFAULT_WORK_FACTOR,
 };
 pub use error::{ConfigError, EngineError, EvalError, StoreError};
 pub use runtime::{Budget, FnBinding, Input, Inputs, Member, Pattern, Runtime, SlicePattern};

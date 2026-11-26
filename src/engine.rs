@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use datumesh_core::{
     lexical, Cell, CellRef, Error as CoreError, ErrorCode, Evaluation, Fault, FunctionDescriptor, KeyDoc, Manifest,
-    Resolver, Scalar, SigningKey,
+    Resolver, Scalar, SigningKey, Slice,
 };
 use datumesh_store::Store;
 
@@ -388,6 +388,11 @@ impl Engine {
     ///
     /// The function name resolves as of the asof; with no binding then, the answer is
     /// [`Answer::NotCovered`]. See the crate documentation for the answers and errors.
+    ///
+    /// Past or current (CONTRACT-guard-patch G10): a read with no asof is current; a named asof
+    /// earlier than the clock at the call's start is a past read, which stores nothing but slice
+    /// definitions (when `store_past_reads` is off). For a request fixed before it is evaluated, see
+    /// [`get_cell_current`](Engine::get_cell_current).
     pub fn get(&self, cell: &CellRef, asof: Option<&str>) -> Result<Answer, EngineError> {
         let now = self.clock.now();
         let a = asof.or(cell.asof.as_deref()).unwrap_or(&now).to_string();
@@ -399,7 +404,7 @@ impl Engine {
             return Ok(Answer::NOT_COVERED);
         };
         let resolved = cell.resolve(&fn_hash).map_err(EngineError::Invalid)?;
-        self.answer(&resolved, &a, &now)
+        self.answer(&resolved, &a, &now, false)
     }
 
     /// The cell `cell` denotes, its function name resolved as of `asof` (else `cell.asof`,
@@ -434,11 +439,22 @@ impl Engine {
         let a = asof.unwrap_or(&now).to_string();
         lexical::check_instant(&a, "$.asof").map_err(EngineError::Invalid)?;
         check_no_slice(&cell.args)?;
-        self.answer(cell, &a, &now)
+        self.answer(cell, &a, &now, false)
+    }
+
+    /// The value of `cell` as of `arrival`, a current read whatever the clock reads when it is
+    /// evaluated: it stores as a current read does (its version and its member-set row, as of the
+    /// arrival), though the clock has moved on (CONTRACT-guard-patch G10; the mesh's requests pin
+    /// their arrival). `get_cell` with a named asof before the clock is a past read instead.
+    pub fn get_cell_current(&self, cell: &Cell, arrival: &str) -> Result<Answer, EngineError> {
+        let now = self.clock.now();
+        lexical::check_instant(arrival, "$.arrival").map_err(EngineError::Invalid)?;
+        check_no_slice(&cell.args)?;
+        self.answer(cell, arrival, &now, true)
     }
 
     /// The answer for a resolved cell as of `a`; `now` is the request's clock reading.
-    fn answer(&self, cell: &Cell, a: &str, now: &str) -> Result<Answer, EngineError> {
+    fn answer(&self, cell: &Cell, a: &str, now: &str, current: bool) -> Result<Answer, EngineError> {
         let Some(desc) = self.descriptor_of(&cell.fn_hash)? else {
             return Ok(Answer::NOT_COVERED);
         };
@@ -449,11 +465,11 @@ impl Engine {
             other => EngineError::Runtime { cell_id: id.clone(), message: other.to_string() },
         };
         // From the memo (a value or a fault), without waiting for the evaluator.
-        let done = match Req::new(self, a, now).memo_done(&id, a).map_err(store_err)? {
+        let done = match Req::new(self, a, now).with_current(current).memo_done(&id, a).map_err(store_err)? {
             Some(d) => d,
             None if desc.lang == STORED => {
                 let start = self.memo.begin();
-                let mut req = Req::new(self, a, now);
+                let mut req = Req::new(self, a, now).with_current(current);
                 match req.stored(cell, &id, a) {
                     Ok(d) => {
                         self.memo.end(start, &req.learned);
@@ -467,7 +483,7 @@ impl Engine {
             }
             None => {
                 let _single = self.evaluator.lock().unwrap_or_else(|p| p.into_inner());
-                self.evaluate_cell(cell, desc, a, now, false)?
+                self.evaluate_cell(cell, desc, a, now, false, current)?
             }
         };
         Ok(match done {
@@ -488,9 +504,10 @@ impl Engine {
         a: &str,
         now: &str,
         unsigned: bool,
+        current: bool,
     ) -> Result<Done, EngineError> {
         let start = self.memo.begin();
-        let mut req = Req::new(self, a, now);
+        let mut req = Req::new(self, a, now).with_current(current);
         let result = (|| {
             if !unsigned {
                 if let Some(done) =
@@ -544,7 +561,7 @@ impl Engine {
             // receipt already signed (or one the store validates) gives its value.
             let suspended = self.store.namespace(&self.host).map_err(|e| StoreError::new("namespace", e))?;
             if suspended.is_some_and(|n| n.suspended_at.is_some()) {
-                match self.evaluate_cell(cell, desc, asof, &now, false)? {
+                match self.evaluate_cell(cell, desc, asof, &now, false, false)? {
                     Done::Value(ans) => {
                         let lineage: BTreeSet<String> = ans
                             .inputs
@@ -559,7 +576,7 @@ impl Engine {
                     _ => return Ok(None),
                 }
             }
-            self.evaluate_cell(cell, desc, asof, &now, true)?
+            self.evaluate_cell(cell, desc, asof, &now, true, false)?
         };
         Ok(match done {
             Done::Value(ans) => Some(Evaluation::new(ans.value.clone())),
@@ -629,9 +646,13 @@ impl Engine {
         let Some((slice_id, members_hash)) = entry.strip_prefix("slice:").and_then(|r| r.split_once(':')) else {
             return Ok(None);
         };
-        let Some(slice) = self.store.slice_definition(slice_id).map_err(|e| StoreError::new("slice_definition", e))?
-        else {
-            return Ok(None);
+        // The slice's definition, kept once per slice; else the member-set row's copy of it (R3).
+        let slice = match self.store.slice_definition(slice_id).map_err(|e| StoreError::new("slice_definition", e))? {
+            Some(s) => s,
+            None => match self.store.member_set(entry).map_err(|e| StoreError::new("member_set", e))? {
+                Some(row) => Slice::from_json(&row.slice).map_err(EngineError::Invalid)?,
+                None => return Ok(None),
+            },
         };
         let Some(desc) = self.descriptor_of(slice.fn_hash())? else { return Ok(None) };
         let mut budget = Budget::with_work(self.fuel, self.work_limit);
@@ -683,6 +704,14 @@ impl Engine {
         self.manifest_asof(entry, &row.asof)
     }
 
+    /// The resolver for one receipt being verified, whose `asof` is the receipt's (R2): the public
+    /// [`Resolver`] of the engine, with a manifest held, else the rebuild from the member-set row,
+    /// else the rebuild as of this `asof` (so a receipt with no row, such as a past read's, verifies).
+    /// Nothing is stored. The engine's own `Resolver` keeps its row-only answer.
+    pub fn resolver_for(&self, asof: &str) -> ReceiptResolver<'_> {
+        ReceiptResolver { eng: self, asof: asof.to_string() }
+    }
+
     /// Drops every memoised answer.
     pub fn clear_memo(&self) {
         self.memo.clear();
@@ -691,6 +720,41 @@ impl Engine {
     /// Sizes of the memo and of the dirty set.
     pub fn memo_stats(&self) -> MemoStats {
         self.memo.stats()
+    }
+}
+
+/// The resolver of one receipt, from [`Engine::resolver_for`]: the engine's, with the manifest as of
+/// the receipt's `asof` when none is held and there is no member-set row.
+pub struct ReceiptResolver<'e> {
+    eng: &'e Engine,
+    asof: String,
+}
+
+impl Resolver for ReceiptResolver<'_> {
+    fn descriptor(&self, fn_hash: &str) -> Option<Cow<'_, [u8]>> {
+        self.eng.descriptor(fn_hash)
+    }
+
+    fn receipt(&self, hash: &str) -> Option<Cow<'_, [u8]>> {
+        self.eng.receipt(hash)
+    }
+
+    fn manifest(&self, entry: &str) -> Option<Cow<'_, [u8]>> {
+        if let Some(b) = self.eng.store.manifest(entry) {
+            return Some(b);
+        }
+        if let Ok(Some(b)) = self.eng.manifest_bytes(entry) {
+            return Some(Cow::Owned(b));
+        }
+        self.eng.manifest_asof(entry, &self.asof).ok().flatten().map(Cow::Owned)
+    }
+
+    fn evaluate(&self, cell: &Cell, asof: &str) -> Option<Scalar> {
+        self.eng.evaluate(cell, asof)
+    }
+
+    fn evaluation(&self, cell: &Cell, asof: &str) -> Option<Evaluation> {
+        self.eng.evaluation(cell, asof)
     }
 }
 

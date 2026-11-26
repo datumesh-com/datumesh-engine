@@ -329,6 +329,8 @@ pub(crate) struct Req<'e> {
     /// The function names each function name reaches through declared inputs, itself
     /// included, as of the request's asof (see [`Req::dependent`]).
     closures: HashMap<String, Arc<HashSet<String>>>,
+    /// A current read (CONTRACT-guard-patch G10): stores as one, whatever its asof.
+    current: bool,
 }
 
 /// How an input of a version compares as of the asof.
@@ -386,6 +388,13 @@ fn store_err(op: &'static str) -> impl Fn(datumesh_store::Error) -> EvalError {
 }
 
 impl<'e> Req<'e> {
+    /// Marks the request a current read (CONTRACT-guard-patch G10): it stores as one, whatever its
+    /// asof against `issued`.
+    pub(crate) fn with_current(mut self, current: bool) -> Self {
+        self.current = current;
+        self
+    }
+
     pub(crate) fn new(eng: &'e Engine, asof: &str, issued: &str) -> Req<'e> {
         Req {
             eng,
@@ -401,6 +410,7 @@ impl<'e> Req<'e> {
             budget: Budget::with_work(eng.fuel, eng.work_limit),
             scope: None,
             closures: HashMap::new(),
+            current: false,
         }
     }
 
@@ -606,8 +616,11 @@ impl<'e> Req<'e> {
         // The version answers from its asof (never earlier than its tx) until a version later
         // by tx answers: from that one's asof. Only the memo needs to know.
         let hi = if self.eng.memo.enabled() {
-            let later = self.eng.store.versions(id, &v.tx, MAX_INSTANT).map_err(store_err("versions"))?;
-            later.into_iter().filter(|w| w.tx > v.tx).map(|w| w.asof).min()
+            // R4 (G9): the versions the store recorded after this one, not those signed after it:
+            // a correction signed earlier but recorded later ends the memo (its answer from its
+            // recording on, or its asof if that is later).
+            let all = self.eng.store.versions(id, MIN_INSTANT, MAX_INSTANT).map_err(store_err("versions"))?;
+            all.into_iter().filter(|w| w.recorded > v.recorded).map(|w| std::cmp::max(w.asof, w.recorded)).min()
         } else {
             None
         };
@@ -2015,7 +2028,8 @@ impl<'e> Req<'e> {
     /// Whether the request writes nothing but slice definitions: a read as of a past time when
     /// the engine does not store those (`store_past_reads`), or a scenario.
     pub(crate) fn stores_nothing(&self) -> bool {
-        self.scope.is_some() || (self.asof.as_str() < self.issued.as_str() && !self.eng.store_past_reads)
+        self.scope.is_some()
+            || (!self.current && self.asof.as_str() < self.issued.as_str() && !self.eng.store_past_reads)
     }
 
     /// Writes the request's new manifests, receipts and computed versions: manifests and

@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 use datumesh_core::{
-    lexical, Cell, CellRef, Evaluation, Fault, FunctionDescriptor, KeyDoc, Resolver, Scalar, SigningKey,
+    lexical, Cell, CellRef, Error as CoreError, ErrorCode, Evaluation, Fault, FunctionDescriptor, KeyDoc, Manifest,
+    Resolver, Scalar, SigningKey,
 };
 use datumesh_store::Store;
 
@@ -15,9 +16,24 @@ use crate::cache::{Cache, Parsed};
 use crate::check::{check_args, check_no_slice};
 use crate::clock::{Clock, SystemClock};
 use crate::error::{ConfigError, EngineError, EvalError, StoreError};
-use crate::eval::{is_instant, parse_stored, Done, Req, Use};
+use crate::eval::{exhausted, is_instant, parse_stored, Done, Req, Use};
 use crate::memo::Memo;
-use crate::runtime::Runtime;
+use crate::runtime::{Budget, Runtime};
+use crate::slice::{extent_cells, spec_of, Spec};
+
+/// How the engine stores the manifests of the slices its receipts read (CONTRACT-guard-patch G1).
+/// A member-set row (G2) is written for every slice read, whatever the policy.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ManifestPolicy {
+    /// The manifest is stored, as today (datumesh-local keeps this one).
+    #[default]
+    Store,
+    /// No manifest is stored: the member-set row only; the members are rebuilt on demand.
+    MemberSetOnly,
+    /// The manifest is stored when the slice has at most this many members; a longer one is not.
+    StoreUpTo(usize),
+}
 
 /// The default depth limit: frames on the evaluation stack.
 pub const DEFAULT_DEPTH_LIMIT: usize = 10_000;
@@ -81,9 +97,25 @@ pub struct EngineBuilder {
     pub(crate) summary: Option<Arc<SummaryFn>>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) accepted: BTreeSet<String>,
+    pub(crate) manifests: ManifestPolicy,
+    pub(crate) store_past_reads: bool,
 }
 
 impl EngineBuilder {
+    /// How the manifests of the slices read are stored (default [`ManifestPolicy::Store`]).
+    pub fn manifests(mut self, policy: ManifestPolicy) -> Self {
+        self.manifests = policy;
+        self
+    }
+
+    /// Whether a read as of a time before the clock's now stores what it makes: its receipt,
+    /// computed version, member-set row and manifest (default true, as today). Off, such a read
+    /// stores only the slice definitions (once per slice) (CONTRACT-guard-patch G10).
+    pub fn store_past_reads(mut self, store: bool) -> Self {
+        self.store_past_reads = store;
+        self
+    }
+
     /// The mesh's signing key.
     pub fn signing_key(mut self, key: SigningKey) -> Self {
         self.key = Some(key);
@@ -207,6 +239,8 @@ impl EngineBuilder {
             licence: self.licence,
             summary: self.summary,
             clock: self.clock,
+            manifests: self.manifests,
+            store_past_reads: self.store_past_reads,
             accepted: RwLock::new(self.accepted),
             memo: Memo::new(self.memo_capacity),
             descriptors: Cache::new(DESCRIPTOR_CACHE),
@@ -235,6 +269,8 @@ pub struct Engine {
     pub(crate) licence: String,
     pub(crate) summary: Option<Arc<SummaryFn>>,
     pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) manifests: ManifestPolicy,
+    pub(crate) store_past_reads: bool,
     /// The accepted restricted licences (E1), read by every licence decision and replaced by
     /// [`Engine::set_accepted_licences`].
     pub(crate) accepted: RwLock<BTreeSet<String>>,
@@ -328,6 +364,8 @@ impl Engine {
             summary: None,
             clock: Arc::new(SystemClock),
             accepted: BTreeSet::new(),
+            manifests: ManifestPolicy::Store,
+            store_past_reads: true,
         }
     }
 
@@ -465,9 +503,11 @@ impl Engine {
             req.flush()?;
             Ok(done)
         })();
+        // An answer a past read made and did not store is not memoised: a later read must make
+        // and store its own (CONTRACT-guard-patch G10).
         match &result {
-            Ok(_) => self.memo.end(start, &req.learned),
-            Err(_) => self.memo.abort(start),
+            Ok(_) if !req.stores_nothing() => self.memo.end(start, &req.learned),
+            _ => self.memo.abort(start),
         }
         result
     }
@@ -576,6 +616,73 @@ impl Engine {
         self.memo.invalidate(cell_id, receipt);
     }
 
+    /// The manifest of the slice entry `entry` as of `asof` (CONTRACT-guard-patch G5, G10): the held
+    /// bytes when a manifest is stored, else the members rebuilt from the slice's definition as of
+    /// `asof` (the canonical bytes a stored manifest holds). Nothing is stored. `Ok(None)` when no
+    /// manifest is held and the mesh has no definition of the slice (or the entry is malformed).
+    /// Errors: `BudgetExceeded` over the fuel; `Invalid` when the members do not hash to the
+    /// entry's members hash, or a member cannot be listed (a false `asof` is refused, not guessed).
+    pub fn manifest_asof(&self, entry: &str, asof: &str) -> Result<Option<Vec<u8>>, EngineError> {
+        if let Some(b) = self.store.manifest(entry) {
+            return Ok(Some(b.into_owned()));
+        }
+        let Some((slice_id, members_hash)) = entry.strip_prefix("slice:").and_then(|r| r.split_once(':')) else {
+            return Ok(None);
+        };
+        let Some(slice) = self.store.slice_definition(slice_id).map_err(|e| StoreError::new("slice_definition", e))?
+        else {
+            return Ok(None);
+        };
+        let Some(desc) = self.descriptor_of(slice.fn_hash())? else { return Ok(None) };
+        let mut budget = Budget::with_work(self.fuel, self.work_limit);
+        let mut hashes: Vec<String> = Vec::new();
+        if desc.lang == STORED {
+            let found = self.store.slice_values(&slice, asof).map_err(|e| StoreError::new("slice_values", e))?;
+            hashes.extend(found.into_iter().map(|v| v.version.receipt_hash));
+        } else {
+            let not_listed = || {
+                EngineError::Invalid(CoreError::new(
+                    ErrorCode::Slice,
+                    "$",
+                    "a member of the slice has no computed version as of the asof",
+                ))
+            };
+            let Some(Spec::Cells { pattern }) = spec_of(&slice) else { return Err(not_listed()) };
+            let cells =
+                extent_cells(&slice.function_name(), slice.fn_hash(), &desc, &pattern).map_err(EngineError::Invalid)?;
+            for cell in cells {
+                let v = self.store.computed_asof(&cell.id(), asof).map_err(|e| StoreError::new("computed_asof", e))?;
+                hashes.push(v.ok_or_else(not_listed)?.receipt_hash);
+            }
+        }
+        if budget.charge(1 + hashes.len() as u64).is_err() {
+            return Err(exhausted(&budget));
+        }
+        hashes.sort();
+        hashes.dedup();
+        let m = Manifest::new(slice, hashes).map_err(EngineError::Invalid)?;
+        if m.members_hash() != members_hash || m.entry() != entry {
+            return Err(EngineError::Invalid(CoreError::new(
+                ErrorCode::Slice,
+                "$",
+                "the members do not hash to the entry's members hash",
+            )));
+        }
+        Ok(Some(m.canonical()))
+    }
+
+    /// The manifest of `entry` as the engine serves it: the held bytes, else the rebuild as of
+    /// the member-set row's `asof` (G6). `Ok(None)` when neither is there.
+    pub(crate) fn manifest_bytes(&self, entry: &str) -> Result<Option<Vec<u8>>, EngineError> {
+        if let Some(b) = self.store.manifest(entry) {
+            return Ok(Some(b.into_owned()));
+        }
+        let Some(row) = self.store.member_set(entry).map_err(|e| StoreError::new("member_set", e))? else {
+            return Ok(None);
+        };
+        self.manifest_asof(entry, &row.asof)
+    }
+
     /// Drops every memoised answer.
     pub fn clear_memo(&self) {
         self.memo.clear();
@@ -599,7 +706,11 @@ impl Resolver for Engine {
     /// The manifest of a slice entry, from the store (the engine stores the manifest of every
     /// slice its receipts and evaluations read).
     fn manifest(&self, entry: &str) -> Option<Cow<'_, [u8]>> {
-        self.store.manifest(entry)
+        if let Some(b) = self.store.manifest(entry) {
+            return Some(b);
+        }
+        // With none held, the list rebuilt as of the member-set row's asof (G6).
+        self.manifest_bytes(entry).ok().flatten().map(Cow::Owned)
     }
 
     /// The value of `cell` as of `asof` by the engine's answering rule (a receipt answers at

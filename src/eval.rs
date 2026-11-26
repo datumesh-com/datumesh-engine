@@ -21,7 +21,7 @@ use datumesh_core::{
 use crate::acceptance::{decide, is_open, overridable, Rule, Verdict};
 use crate::cache::Parsed;
 use crate::check::{check_args, valid_args};
-use crate::engine::{Engine, STORED};
+use crate::engine::{Engine, ManifestPolicy, STORED};
 use crate::error::{EngineError, EvalError, StoreError};
 use crate::memo::Entry;
 use crate::runtime::{Budget, FnBinding, Input, Inputs, Member, SlicePattern};
@@ -159,6 +159,18 @@ impl FaultAns {
 pub(crate) struct SliceRead {
     pub(crate) entry: String,
     pub(crate) manifest: Arc<Vec<u8>>,
+    /// The manifest object the bytes are of (for the member-set row); none for a slice read from
+    /// a stored row (G3), which is never written again.
+    pub(crate) set: Option<Manifest>,
+    /// The slice's seq read before its members (G3, decided 26 Nov). 0 when a version of the slice
+    /// was recorded after the read's asof: a changed slice has a version, so its seq is at least 1,
+    /// and a row of 0 is never reused (`reuse_entry`). Stores refuse a negative seq.
+    pub(crate) seen_seq: i64,
+    /// The members' licences from the stored row (G3), when the read is from it: the members are
+    /// not read, so these stand for them.
+    pub(crate) row_licences: Option<Vec<String>>,
+    /// The as-of the read was made at (the member-set row's `asof`).
+    pub(crate) asof: String,
     pub(crate) slice: Arc<Slice>,
     pub(crate) fn_name: String,
     pub(crate) fn_hash: String,
@@ -171,7 +183,7 @@ pub(crate) struct SliceRead {
     /// Where the read holds from (the latest member asof, and `to`), and until.
     lo: Option<String>,
     hi: Option<String>,
-    /// The latest member tx.
+    /// The latest member tx (by recorded time, CONTRACT-guard-patch G9).
     tx: Option<String>,
     memo: bool,
 }
@@ -185,6 +197,8 @@ pub(crate) struct MemberRec {
     args: Args,
     tx: String,
     asof: String,
+    /// When the store recorded the member's version (G9): its answer is not before it.
+    recorded: String,
     /// A member a scenario changed: its hash is a scenario's, not a receipt's.
     scoped: bool,
 }
@@ -300,8 +314,9 @@ pub(crate) struct Req<'e> {
     /// Slices read, by (asof, slice id).
     slices: HashMap<(String, String), Arc<SliceRead>>,
     fresh: Vec<Fresh>,
-    /// Manifests of the slices runtimes read, by entry.
-    manifests: BTreeMap<String, Arc<Vec<u8>>>,
+    /// The slices the request read fresh, by entry: their manifests and member-set rows are
+    /// written by [`Req::flush`] under the engine's manifest policy.
+    slice_reads: BTreeMap<String, Arc<SliceRead>>,
     /// The declarations of each publisher host (SPEC 9.2), read from the store once per
     /// request: `None` when the store has no key document for the host, or one without.
     declarations: HashMap<String, Option<Arc<Declarations>>>,
@@ -380,7 +395,7 @@ impl<'e> Req<'e> {
             done: HashMap::new(),
             slices: HashMap::new(),
             fresh: Vec::new(),
-            manifests: BTreeMap::new(),
+            slice_reads: BTreeMap::new(),
             declarations: HashMap::new(),
             learned: Vec::new(),
             budget: Budget::with_work(eng.fuel, eng.work_limit),
@@ -749,7 +764,8 @@ impl<'e> Req<'e> {
         let id = cell.id();
         let asof = self.asof.clone();
         for p in self.scope_order(&cell)? {
-            if self.done_at(&p.asof, &p.id).is_some() {
+            // An overridden cell's answer is the override, given by `lookup` (not evaluated here).
+            if self.done_at(&p.asof, &p.id).is_some() || self.overridden(&p.id).is_some() {
                 continue;
             }
             // A cycle here is an artifact of the order (the receipts were made at other
@@ -819,7 +835,7 @@ impl<'e> Req<'e> {
         let mut out = Vec::new();
         for entry in r.receipt.inputs() {
             if entry.starts_with("slice:") {
-                let Some(bytes) = self.eng.store.manifest(entry) else { continue };
+                let Some(bytes) = self.eng.manifest_bytes(entry)? else { continue };
                 let m = Manifest::from_json(&bytes).map_err(EngineError::Invalid)?;
                 for h in m.members() {
                     if let Some(p) = self.receipt(h)? {
@@ -993,8 +1009,15 @@ impl<'e> Req<'e> {
         let names = std::mem::take(names);
         // Licence inheritance (SPEC 8.5): a version whose licence the rule no longer gives
         // (a receipt signed before 0.4.1, an input now under another licence) is evaluated
-        // again, then signed again or refused.
+        // again, then signed again or refused. A refusal the rule gives now, over the same
+        // members' licences, is given without evaluating again (G3: the row's licences).
         if !self.reusable(f, &read, &cand.receipt)? {
+            let licences = self.licences(&read)?;
+            let issued = self.issued.clone();
+            let rule = self.inherit(f, &licences, &issued, &self.eng.licence.clone())?;
+            if rule.licence.is_none() {
+                return Err(EngineError::Unlicensed { cell_id: f.id.clone(), reason: rule.reason });
+            }
             f.state = State::Eval { cand: Some(cand) };
             return Ok(Step::Again);
         }
@@ -1074,7 +1097,25 @@ impl<'e> Req<'e> {
     /// Whether the slice entry `entry` of a version (its manifest from the store) has the
     /// same members, or members with the same values, as of `asof`.
     fn check_entry(&mut self, entry: &str, asof: &str) -> Result<Check, EngineError> {
-        let Some(bytes) = self.eng.store.manifest(entry) else { return Ok(Check::Differs) };
+        if let Some(check) = self.reuse_entry(entry, asof)? {
+            return Ok(check);
+        }
+        let Some(bytes) = self.eng.store.manifest(entry) else {
+            // No manifest held (MemberSetOnly, or stored before 0.6.2 under another policy): the
+            // member-set row gives the slice; its members are read again, and the version stands
+            // when they are the same set (the reuse without a member read is G3, not yet made).
+            let Some(row) = self.eng.store.member_set(entry).map_err(|e| StoreError::new("member_set", e))? else {
+                return Ok(Check::Differs);
+            };
+            let Ok(slice) = Slice::from_json(&row.slice) else { return Ok(Check::Differs) };
+            let slice = Arc::new(slice);
+            return match self.check_slice(entry, &slice, None, asof)? {
+                Check::Same(Rd::Slice(now), name, hash) if now.entry == entry => {
+                    Ok(Check::Same(Rd::Slice(now), name, hash))
+                }
+                _ => Ok(Check::Differs),
+            };
+        };
         let Ok(m) = Manifest::from_json(&bytes) else { return Ok(Check::Differs) };
         let slice = Arc::new(m.slice().clone());
         let check = self.check_slice(entry, &slice, None, asof)?;
@@ -1096,6 +1137,63 @@ impl<'e> Req<'e> {
             }
         }
         Ok(if same_members(&old, &now) { Check::Same(Rd::Slice(now), name, hash) } else { Check::Differs })
+    }
+
+    /// G3, "inserted since" (decided 26 Nov): a stored-function slice's row stands for a read as of
+    /// `asof` when the asof is the row's own or later, no version of the slice was inserted since
+    /// the row's `seen_seq` (`fn_seq` at or below it, else `slice_seq` still equal to it), and the row
+    /// is not marked 0 (a change was recorded after its asof when it was read). The shell carries
+    /// the row's licences and reads no member; it is never memoised nor written. `None`: the caller
+    /// reads the members.
+    fn reuse_entry(&mut self, entry: &str, asof: &str) -> Result<Option<Check>, EngineError> {
+        if self.scope.is_some() {
+            return Ok(None);
+        }
+        let Some(row) = self.eng.store.member_set(entry).map_err(|e| StoreError::new("member_set", e))? else {
+            return Ok(None);
+        };
+        if row.seen_seq <= 0 || asof < row.asof.as_str() {
+            return Ok(None);
+        }
+        let Ok(slice) = Slice::from_json(&row.slice) else { return Ok(None) };
+        let slice = Arc::new(slice);
+        let name = slice.function_name();
+        let fail = |e: EvalError| engine_error(e, entry);
+        if !self.resolves_to(&name, asof, slice.fn_hash()).map_err(fail)? {
+            return Ok(None);
+        }
+        let Some(desc) = self.eng.descriptor_of(slice.fn_hash())? else { return Ok(None) };
+        if desc.lang != STORED {
+            return Ok(None);
+        }
+        // The quick check: no version of the function since the row was read (no candidate walk).
+        if self.eng.store.fn_seq(slice.fn_hash()).map_err(|e| StoreError::new("fn_seq", e))? > row.seen_seq {
+            let now = self.eng.store.slice_seq(&slice).map_err(|e| StoreError::new("slice_seq", e))?;
+            if now != row.seen_seq {
+                return Ok(None);
+            }
+        }
+        self.budget.work(1).map_err(fail)?;
+        let fn_hash = slice.fn_hash().to_string();
+        let shell = SliceRead {
+            entry: entry.to_string(),
+            manifest: Arc::new(Vec::new()),
+            set: None,
+            seen_seq: row.seen_seq,
+            row_licences: Some(row.licences.clone()),
+            asof: row.asof.clone(),
+            fn_name: name.clone(),
+            fn_hash: fn_hash.clone(),
+            computed: false,
+            members: Vec::new(),
+            member_ans: Vec::new(),
+            lo: row.tx.clone(),
+            hi: None,
+            tx: row.tx.clone(),
+            memo: false,
+            slice,
+        };
+        Ok(Some(Check::Same(Rd::Slice(Arc::new(shell)), Some((name, None)), fn_hash)))
     }
 
     /// Reads `slice` again as of `asof` (its name resolving to its function). With `old`
@@ -1149,6 +1247,7 @@ impl<'e> Req<'e> {
         let mut members = Vec::new();
         let mut member_ans = Vec::new();
         let (lo, hi, memo);
+        let mut seen_seq = 0i64;
         // The withdrawal that left a member out, as (tx, asof) (SPEC 8.2), when there is one.
         let mut withdrawn_at: Option<(String, String)> = None;
         match (&spec, computed) {
@@ -1189,6 +1288,7 @@ impl<'e> Req<'e> {
                         args: a.cell.args.clone(),
                         tx: a.tx.clone(),
                         asof: a.asof.clone(),
+                        recorded: a.tx.clone(),
                         scoped: false,
                     });
                 }
@@ -1207,15 +1307,22 @@ impl<'e> Req<'e> {
                 // Values, hashes, tx and asof from the store's columns and its typed-argument
                 // index (store 0.3.2): no receipt bytes; the receipts are not needed to read a
                 // slice, only to sign what is read.
+                // The slice's seq is read before its members (G3): a change after it is one the
+                // row does not hold, and the reuse check sees it as an insertion since.
+                seen_seq = self.eng.store.slice_seq(&slice).map_err(store_err("slice_seq"))?;
                 let found = self.eng.store.slice_values(&slice, asof).map_err(store_err("slice_values"))?;
                 for v in found {
+                    // The member's answer is not before the time the store recorded it (G9): a
+                    // backfill signed earlier is an answer from its recording on.
+                    let asof = std::cmp::max(v.version.asof.clone(), v.version.recorded.clone());
                     members.push(MemberRec {
                         id: v.version.cell_id,
                         hash: v.version.receipt_hash,
                         value: v.value,
                         args: v.cell.args,
                         tx: v.version.tx,
-                        asof: v.version.asof,
+                        asof,
+                        recorded: v.version.recorded,
                         scoped: false,
                     });
                 }
@@ -1224,13 +1331,14 @@ impl<'e> Req<'e> {
                 }
                 // Holding past the asof: when no version of a matching cell answers later, else
                 // at the asof only. Versions stored later are the dirty set's.
-                hi = if self.eng.memo.enabled()
-                    && self.eng.store.slice_changed_after(&slice, asof).map_err(store_err("slice_changed_after"))?
-                {
-                    Some(just_after(asof))
-                } else {
-                    None
-                };
+                // A version recorded (or answering) after the asof: the members as of a later
+                // asof may differ from these, so the row is not reused (G3).
+                let changed =
+                    self.eng.store.slice_changed_after(&slice, asof).map_err(store_err("slice_changed_after"))?;
+                if changed {
+                    seen_seq = 0;
+                }
+                hi = if self.eng.memo.enabled() && changed { Some(just_after(asof)) } else { None };
                 let to = match &spec {
                     Spec::Versions { to, .. } => Some(to.clone()),
                     Spec::Cells { .. } => None,
@@ -1257,7 +1365,11 @@ impl<'e> Req<'e> {
             fn_name: fn_name.to_string(),
             fn_hash,
             computed,
-            tx: members.iter().map(|m| m.tx.clone()).chain(withdrawn_at.as_ref().map(|w| w.0.clone())).max(),
+            tx: members.iter().map(|m| m.recorded.clone()).chain(withdrawn_at.as_ref().map(|w| w.0.clone())).max(),
+            set: Some(manifest),
+            seen_seq,
+            row_licences: None,
+            asof: asof.to_string(),
             members,
             member_ans,
             lo,
@@ -1483,7 +1595,7 @@ impl<'e> Req<'e> {
         if f.unsigned {
             for rd in &read {
                 if let Rd::Slice(s) = rd {
-                    self.manifests.insert(s.entry.clone(), s.manifest.clone());
+                    self.slice_reads.insert(s.entry.clone(), s.clone());
                 }
             }
             let entries: BTreeSet<String> = read.iter().map(|r| r.entry().to_string()).collect();
@@ -1680,7 +1792,7 @@ impl<'e> Req<'e> {
         let hash = receipt.hash().to_string();
         for rd in read {
             if let Rd::Slice(s) = rd {
-                self.manifests.insert(s.entry.clone(), s.manifest.clone());
+                self.slice_reads.insert(s.entry.clone(), s.clone());
             }
         }
         self.fresh.push(Fresh {
@@ -1768,6 +1880,9 @@ impl<'e> Req<'e> {
         for rd in read {
             match rd {
                 Rd::Cell { ans, .. } => out.push(ans.licence.clone()),
+                Rd::Slice(s) if s.row_licences.is_some() => {
+                    out.extend(s.row_licences.iter().flatten().cloned());
+                }
                 Rd::Slice(s) if s.computed => out.extend(s.member_ans.iter().map(|a| a.licence.clone())),
                 Rd::Slice(s) => {
                     for m in &s.members {
@@ -1873,12 +1988,53 @@ impl<'e> Req<'e> {
         self.entitled_with(f, &licences, r)
     }
 
+    /// The licences of a fresh slice read's members, as the licence rule reads them (a scoped
+    /// member counts with the mesh's own licence).
+    fn slice_licences(&self, s: &SliceRead) -> Result<Vec<String>, EngineError> {
+        if s.computed {
+            return Ok(s.member_ans.iter().map(|a| a.licence.clone()).collect());
+        }
+        let mut out = Vec::with_capacity(s.members.len());
+        for m in &s.members {
+            if m.scoped {
+                out.push(self.eng.licence.clone());
+                continue;
+            }
+            let Some(p) = self.receipt(&m.hash)? else {
+                return Err(StoreError::new(
+                    "receipt",
+                    datumesh_store::Error::NotFound { what: "receipt", key: m.hash.clone() },
+                )
+                .into());
+            };
+            out.push(p.receipt.licence().to_string());
+        }
+        Ok(out)
+    }
+
+    /// Whether the request writes nothing but slice definitions: a read as of a past time when
+    /// the engine does not store those (`store_past_reads`), or a scenario.
+    pub(crate) fn stores_nothing(&self) -> bool {
+        self.scope.is_some() || (self.asof.as_str() < self.issued.as_str() && !self.eng.store_past_reads)
+    }
+
     /// Writes the request's new manifests, receipts and computed versions: manifests and
     /// receipts first (inputs before the receipts reading them), then the versions.
     pub(crate) fn flush(&mut self) -> Result<(), EngineError> {
         if self.scope.is_some() {
             self.fresh.clear();
-            self.manifests.clear();
+            self.slice_reads.clear();
+            return Ok(());
+        }
+        // A slice's definition is kept once per distinct slice, a read as of a past time
+        // included (CONTRACT-guard-patch G10); nothing else is stored by a past read when the
+        // engine does not store those (`store_past_reads`, G10 and the mesh's setting).
+        for s in self.slice_reads.values() {
+            self.eng.store.put_slice_definition(&s.slice).map_err(|e| StoreError::new("put_slice_definition", e))?;
+        }
+        if self.stores_nothing() {
+            self.fresh.clear();
+            self.slice_reads.clear();
             return Ok(());
         }
         // Nothing is written when a receipt would be (SPEC 9.9): the store refuses the receipts
@@ -1890,8 +2046,23 @@ impl<'e> Req<'e> {
                 }
             }
         }
-        for m in self.manifests.values() {
-            self.eng.store.put_manifest(m).map_err(|e| StoreError::new("put_manifest", e))?;
+        // The member-set row of every slice read (G2), and its manifest under the policy (G1).
+        let reads: Vec<Arc<SliceRead>> = self.slice_reads.values().cloned().collect();
+        for s in reads {
+            let Some(set) = &s.set else { continue };
+            let stored = match self.eng.manifests {
+                ManifestPolicy::Store => true,
+                ManifestPolicy::MemberSetOnly => false,
+                ManifestPolicy::StoreUpTo(n) => set.members().len() <= n,
+            };
+            if stored {
+                self.eng.store.put_manifest(&s.manifest).map_err(|e| StoreError::new("put_manifest", e))?;
+            }
+            // The members' distinct licences (G3): from their receipts, as the rule reads them.
+            let mut row = datumesh_store::MemberSet::from_manifest(set, s.tx.as_deref(), &s.asof);
+            row.licences = self.slice_licences(&s)?;
+            row.seen_seq = s.seen_seq;
+            self.eng.store.put_member_set(&row).map_err(|e| StoreError::new("put_member_set", e))?;
         }
         for f in &self.fresh {
             self.eng.store.put_receipt(&f.bytes).map_err(|e| StoreError::new("put_receipt", e))?;
@@ -1909,7 +2080,7 @@ impl<'e> Req<'e> {
             }
         }
         self.fresh.clear();
-        self.manifests.clear();
+        self.slice_reads.clear();
         Ok(())
     }
 }
@@ -1954,6 +2125,7 @@ fn override_member(c: &Cell, v: &Scalar, asof: &str, scope: &Scope) -> MemberRec
         args: c.args.clone(),
         tx: asof.to_string(),
         asof: asof.to_string(),
+        recorded: asof.to_string(),
         scoped: true,
     }
 }

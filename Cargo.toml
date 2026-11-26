@@ -150,3 +150,7 @@ required-features = ["native-test"]
 [[test]]
 name = "engine_061_local_acceptance"
 required-features = ["native-test"]
+
+[[test]]
+name = "engine_062_manifest_policy"
+required-features = ["native-test"]

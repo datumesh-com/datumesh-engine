@@ -202,7 +202,7 @@ fn a_past_read_keeps_the_slice_definition_once_and_its_list_rebuilds_with_no_row
     assert_eq!(w.store.member_set(&r.inputs()[0]).unwrap(), None);
     // Varying the date stores nothing new.
     for h in [11, 13, 15] {
-        e.get(&flood(&w), Some(&t(h, 30))).unwrap();
+        e.get(&flood(&w), Some(&t(h, 12))).unwrap();
         w.engine_with(mesh()).get(&flood(&w), Some(&t(h, 0))).unwrap();
     }
     assert_eq!(stored_rows(&w), after, "nothing new per date");

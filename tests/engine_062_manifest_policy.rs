@@ -24,7 +24,9 @@
 //! // datumesh_store 0.6.5 (see the store's tests/store_065_member_sets.rs)
 //! pub struct MemberSet { pub entry, pub slice_id, pub members_hash, pub fn_hash, pub slice: Vec<u8>,
 //!                        pub members: u64, pub tx: Option<String>, pub asof: String,
-//!                        pub licences: Vec<String> }  // the members' distinct licences, sorted
+//!                        pub licences: Vec<String>,
+//!                        pub seen_seq: i64 }  // the slice's seq read before the members (decided 26 Nov)
+//! fn slice_seq(&self, slice: &Slice) -> Result<i64>; // the highest insertion seq the slice matches  // the members' distinct licences, sorted
 //!                                                    // (decided 26 Nov); a scoped member counts
 //!                                                    // with the mesh's own licence
 //! fn put_member_set(&self, set: &MemberSet) -> Result<bool>;
@@ -369,6 +371,84 @@ fn a_new_member_after_the_rows_tx_makes_it_re_evaluate() {
 
 // A new member with an older signed time: engine_062_recorded.rs (G9), on a store that records at
 // its clock; without one the store records the signed time, as before migration 17.
+
+// ---- G3 asks "inserted since" (decided 26 Nov): the slice's seq ----------------------------
+
+/// The slice a row is of.
+fn slice_of_row(row: &datumesh_store::MemberSet) -> datumesh_core::Slice {
+    datumesh_core::Slice::from_json(&row.slice).unwrap()
+}
+
+#[test]
+fn the_row_keeps_the_slices_seq_and_reuse_stands_only_while_it_holds() {
+    for policy in [ManifestPolicy::MemberSetOnly, ManifestPolicy::Store] {
+        let w = world();
+        seed(&w);
+        let first = w.engine_with(with(policy)).get(&north(&w), Some(&t(20, 0))).unwrap();
+        let r = receipt_of(&first);
+        let row = w.store.member_set(&r.inputs()[0]).unwrap().expect("the row");
+        let sl = slice_of_row(&row);
+        assert!(row.seen_seq > 0, "{policy:?}");
+        assert_eq!(
+            row.seen_seq,
+            w.store.slice_seq(&sl).unwrap(),
+            "{policy:?}: the slice's seq, read before the members"
+        );
+        let wire = common::wire::Wire::start(&w.db().config);
+        let reuse = |what: &str, same: bool| {
+            let e = counted(&w, &wire, policy);
+            wire.take();
+            let a = e.get(&north(&w), Some(&t(20, 0))).unwrap();
+            let sql = wire.take();
+            if same {
+                assert_eq!(a, first, "{policy:?} {what}: the version stands");
+                assert_eq!(member_reads(&sql), 0, "{policy:?} {what}: {sql:#?}");
+            } else {
+                assert!(member_reads(&sql) > 0, "{policy:?} {what}: the members are read again: {sql:#?}");
+            }
+        };
+        reuse("unchanged", true);
+        // A version outside the slice (another region): its seq does not move; the version stands.
+        w.publish(&temp(&w, "south", "z"), "5", &t(12, 0));
+        assert_eq!(w.store.slice_seq(&sl).unwrap(), row.seen_seq, "{policy:?}");
+        reuse("a version outside the slice", true);
+        // A new member: the seq moves; the members are read.
+        w.publish(&temp(&w, "north", "z"), "5", &t(12, 0));
+        assert!(w.store.slice_seq(&sl).unwrap() > row.seen_seq, "{policy:?}");
+        reuse("a new member", false);
+    }
+}
+
+#[test]
+fn a_member_recorded_at_exactly_the_rows_tx_makes_it_recompute_with_no_clock() {
+    // No recording clock: recorded = the signed tx. The row's tx is the 11th (station b); a new
+    // station recorded at exactly the 11th is no change "after" it, but it was inserted since.
+    let w = world();
+    seed(&w);
+    let r = receipt_of(&w.engine_with(with(ManifestPolicy::MemberSetOnly)).get(&north(&w), Some(&t(20, 0))).unwrap());
+    assert_eq!(r.value(), &num("30"));
+    assert_eq!(w.store.member_set(&r.inputs()[0]).unwrap().unwrap().tx.as_deref(), Some(t(11, 0).as_str()));
+    w.publish(&temp(&w, "north", "c"), "7", &t(11, 0));
+    let calls = w.calls(TOTAL);
+    let now = receipt_of(&w.engine_with(with(ManifestPolicy::MemberSetOnly)).get(&north(&w), Some(&t(20, 0))).unwrap());
+    assert_eq!(now.value(), &num("37"), "recomputed with the member recorded at the row's tx");
+    assert_eq!(w.calls(TOTAL), calls + 1);
+}
+
+#[test]
+fn a_backdated_correction_makes_it_recompute_with_no_clock() {
+    // No recording clock: a correction of station a at the 10th 12:00, after a's first version (the
+    // 10th) but before the row's tx (b, the 11th): recorded before the row's tx, inserted since.
+    let w = world();
+    seed(&w);
+    let r = receipt_of(&w.engine_with(with(ManifestPolicy::MemberSetOnly)).get(&north(&w), Some(&t(20, 0))).unwrap());
+    assert_eq!(r.value(), &num("30"));
+    w.publish(&temp(&w, "north", "a"), "15", &t(10, 12));
+    let calls = w.calls(TOTAL);
+    let now = receipt_of(&w.engine_with(with(ManifestPolicy::MemberSetOnly)).get(&north(&w), Some(&t(20, 0))).unwrap());
+    assert_eq!(now.value(), &num("35"), "recomputed with the correction");
+    assert_eq!(w.calls(TOTAL), calls + 1);
+}
 
 // ---- G3 with licences (decided 26 Nov: the row carries its members' licences) ----------------
 

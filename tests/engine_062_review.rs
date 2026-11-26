@@ -238,3 +238,36 @@ fn a_warmed_memo_ends_at_the_least_start_of_the_later_versions() {
         "v1's memo entry ends at v3's start (the least later start), not at the next version v2's asof"
     );
 }
+
+// ---- Second review (27 Nov), B4: put_cells looks its versions up in one query -------------------
+
+#[test]
+fn put_cells_looks_up_existing_versions_in_a_bounded_number_of_statements() {
+    let w = World::new();
+    w.stored_fn(LEVEL, &[("d", DATE), ("station", STR)]);
+    let cells: Vec<Cell> = (0..50).map(|k| level(&w, &format!("s{k:02}"))).collect();
+    let receipts: Vec<(String, Vec<u8>)> =
+        cells.iter().map(|c| (c.id(), w.sign_stored(c, num("1"), &t(10, 0), &t(10, 0)))).collect();
+    let tx = t(10, 0);
+    let items: Vec<datumesh_store::CellWrite> =
+        receipts.iter().map(|(id, r)| datumesh_store::CellWrite::new(r, Some((id.as_str(), tx.as_str())))).collect();
+    w.store.put_cells(&items).unwrap();
+    let wire = common::wire::Wire::start(&w.db().config);
+    let s = wire.store();
+    wire.take();
+    // The same batch again (50 existing versions): a no-op, its lookups in a few statements, not 50.
+    datumesh_store::Store::put_cells(&s, &items).unwrap();
+    let sql = wire.take();
+    let lookups = common::wire::matching(&sql, "FROM versions");
+    assert!(
+        lookups <= 3,
+        "the existing versions are looked up in one batched query, not one each: {lookups}: {sql:#?}"
+    );
+    // A batch with no versions takes no global lock.
+    let only: Vec<datumesh_store::CellWrite> =
+        receipts.iter().map(|(_, r)| datumesh_store::CellWrite::new(r, None)).collect();
+    datumesh_store::Store::put_cells(&s, &only).unwrap();
+    let sql = wire.take();
+    assert_eq!(common::wire::matching(&sql, "advisory"), 0, "receipts only: no version lock: {sql:#?}");
+    std::mem::forget(s);
+}

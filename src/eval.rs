@@ -31,8 +31,6 @@ use crate::whatif::{scoped_hash, Scope};
 
 /// The earliest instant: the asof and tx of a computed receipt with no inputs.
 pub(crate) const MIN_INSTANT: &str = "0001-01-01T00:00:00.000000Z";
-/// The latest instant.
-pub(crate) const MAX_INSTANT: &str = "9999-12-31T23:59:59.999999Z";
 
 /// A string just after the instant `a` and before every later instant (instants have a fixed
 /// width, so `a` followed by any character is): the exclusive end of an interval holding at
@@ -615,16 +613,20 @@ impl<'e> Req<'e> {
         let p = self.eng.parsed(&v.receipt_hash, &bytes).map_err(EvalError::Store)?;
         // The version answers from its asof (never earlier than its tx) until a version later
         // by tx answers: from that one's asof. Only the memo needs to know.
+        // The memo's bound: the first version the store recorded after this one (one row, G9), from
+        // the time it answers: the later of its asof and its recording (review item 7).
         let hi = if self.eng.memo.enabled() {
-            // R4 (G9): the versions the store recorded after this one, not those signed after it:
-            // a correction signed earlier but recorded later ends the memo (its answer from its
-            // recording on, or its asof if that is later).
-            let all = self.eng.store.versions(id, MIN_INSTANT, MAX_INSTANT).map_err(store_err("versions"))?;
-            all.into_iter().filter(|w| w.recorded > v.recorded).map(|w| std::cmp::max(w.asof, w.recorded)).min()
+            self.eng
+                .store
+                .next_version_after(id, &v.recorded)
+                .map_err(store_err("next_version_after"))?
+                .map(|w| std::cmp::max(w.asof, w.recorded))
         } else {
             None
         };
         let r = &p.receipt;
+        // The answer holds from the later of its asof and its recording (review item 1).
+        let lo = std::cmp::max(r.asof().to_string(), v.recorded.clone());
         let a = Arc::new(Ans {
             id: id.to_string(),
             hash: v.receipt_hash.clone(),
@@ -633,7 +635,7 @@ impl<'e> Req<'e> {
             tx: r.tx().to_string(),
             asof: r.asof().to_string(),
             licence: r.licence().to_string(),
-            lo: r.asof().to_string(),
+            lo,
             hi,
             names: Arc::new(Names::new()),
             cell: cell.clone(),

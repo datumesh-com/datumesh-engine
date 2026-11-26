@@ -399,6 +399,7 @@ impl Engine {
         lexical::check_instant(&a, "$.asof").map_err(EngineError::Invalid)?;
         check_no_slice(&cell.args)?;
         let fn_name = format!("{}/{}", cell.ns, cell.fn_name);
+        self.barrier()?;
         let Some(fn_hash) = self.store.resolve_name(&fn_name, &a).map_err(|e| StoreError::new("resolve_name", e))?
         else {
             return Ok(Answer::NOT_COVERED);
@@ -439,6 +440,7 @@ impl Engine {
         let a = asof.unwrap_or(&now).to_string();
         lexical::check_instant(&a, "$.asof").map_err(EngineError::Invalid)?;
         check_no_slice(&cell.args)?;
+        self.barrier()?;
         self.answer(cell, &a, &now, false)
     }
 
@@ -450,6 +452,7 @@ impl Engine {
         let now = self.clock.now();
         lexical::check_instant(arrival, "$.arrival").map_err(EngineError::Invalid)?;
         check_no_slice(&cell.args)?;
+        self.barrier()?;
         self.answer(cell, arrival, &now, true)
     }
 
@@ -640,6 +643,40 @@ impl Engine {
     /// Errors: `BudgetExceeded` over the fuel; `Invalid` when the members do not hash to the
     /// entry's members hash, or a member cannot be listed (a false `asof` is refused, not guessed).
     pub fn manifest_asof(&self, entry: &str, asof: &str) -> Result<Option<Vec<u8>>, EngineError> {
+        self.barrier()?;
+        self.manifest_asof_inner(entry, asof, None)
+    }
+
+    /// [`manifest_asof`](Engine::manifest_asof) with a deadline (CONTRACT-guard-patch, the time budget of
+    /// a request, `DATUMESH_BUDGET_MS`): `BudgetExceeded` once `deadline` has passed, checked before and
+    /// after the listing and while listing or hashing the members. Nothing is stored.
+    pub fn manifest_asof_until(
+        &self,
+        entry: &str,
+        asof: &str,
+        deadline: std::time::Instant,
+    ) -> Result<Option<Vec<u8>>, EngineError> {
+        self.barrier()?;
+        self.manifest_asof_inner(entry, asof, Some(deadline))
+    }
+
+    /// The store's barrier (CONTRACT-guard-patch review item 2): called once per request, before its
+    /// first store read, so that a version recorded at or before the request's asof is seen.
+    fn barrier(&self) -> Result<(), EngineError> {
+        self.store.barrier().map_err(|e| StoreError::new("barrier", e).into())
+    }
+
+    /// [`manifest_asof`](Engine::manifest_asof) within a request that has passed the barrier.
+    fn manifest_asof_inner(
+        &self,
+        entry: &str,
+        asof: &str,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<Option<Vec<u8>>, EngineError> {
+        let late = || deadline.is_some_and(|d| std::time::Instant::now() >= d);
+        if late() {
+            return Err(EngineError::BudgetExceeded { fuel: self.fuel });
+        }
         if let Some(b) = self.store.manifest(entry) {
             return Ok(Some(b.into_owned()));
         }
@@ -657,9 +694,19 @@ impl Engine {
         let Some(desc) = self.descriptor_of(slice.fn_hash())? else { return Ok(None) };
         let mut budget = Budget::with_work(self.fuel, self.work_limit);
         let mut hashes: Vec<String> = Vec::new();
+        // Over the fuel is refused as the listing goes: only receipt hashes are read, bounded at
+        // fuel + 1 (review item 5); no member's value is loaded.
+        let over = || EngineError::BudgetExceeded { fuel: self.fuel };
         if desc.lang == STORED {
-            let found = self.store.slice_values(&slice, asof).map_err(|e| StoreError::new("slice_values", e))?;
-            hashes.extend(found.into_iter().map(|v| v.version.receipt_hash));
+            let limit = usize::try_from(self.fuel.saturating_add(1)).unwrap_or(usize::MAX);
+            let found = self
+                .store
+                .slice_member_hashes(&slice, asof, limit)
+                .map_err(|e| StoreError::new("slice_member_hashes", e))?;
+            if found.len() as u64 > self.fuel || late() {
+                return Err(over());
+            }
+            hashes.extend(found);
         } else {
             let not_listed = || {
                 EngineError::Invalid(CoreError::new(
@@ -674,10 +721,16 @@ impl Engine {
             for cell in cells {
                 let v = self.store.computed_asof(&cell.id(), asof).map_err(|e| StoreError::new("computed_asof", e))?;
                 hashes.push(v.ok_or_else(not_listed)?.receipt_hash);
+                if hashes.len() as u64 > self.fuel || late() {
+                    return Err(over());
+                }
             }
         }
         if budget.charge(1 + hashes.len() as u64).is_err() {
             return Err(exhausted(&budget));
+        }
+        if late() {
+            return Err(over());
         }
         hashes.sort();
         hashes.dedup();
@@ -701,7 +754,7 @@ impl Engine {
         let Some(row) = self.store.member_set(entry).map_err(|e| StoreError::new("member_set", e))? else {
             return Ok(None);
         };
-        self.manifest_asof(entry, &row.asof)
+        self.manifest_asof_inner(entry, &row.asof, None)
     }
 
     /// The resolver for one receipt being verified, whose `asof` is the receipt's (R2): the public
@@ -709,7 +762,7 @@ impl Engine {
     /// else the rebuild as of this `asof` (so a receipt with no row, such as a past read's, verifies).
     /// Nothing is stored. The engine's own `Resolver` keeps its row-only answer.
     pub fn resolver_for(&self, asof: &str) -> ReceiptResolver<'_> {
-        ReceiptResolver { eng: self, asof: asof.to_string() }
+        ReceiptResolver { eng: self, asof: asof.to_string(), ready: std::sync::OnceLock::new() }
     }
 
     /// Drops every memoised answer.
@@ -724,36 +777,60 @@ impl Engine {
 }
 
 /// The resolver of one receipt, from [`Engine::resolver_for`]: the engine's, with the manifest as of
-/// the receipt's `asof` when none is held and there is no member-set row.
+/// the receipt's `asof` when none is held and there is no member-set row. Its first call passes the
+/// store's barrier (review item 2), so the reads that follow see every version recorded at or before
+/// the asof; a barrier that fails answers nothing.
 pub struct ReceiptResolver<'e> {
     eng: &'e Engine,
     asof: String,
+    ready: std::sync::OnceLock<bool>,
+}
+
+impl ReceiptResolver<'_> {
+    fn ready(&self) -> bool {
+        *self.ready.get_or_init(|| self.eng.barrier().is_ok())
+    }
 }
 
 impl Resolver for ReceiptResolver<'_> {
     fn descriptor(&self, fn_hash: &str) -> Option<Cow<'_, [u8]>> {
+        if !self.ready() {
+            return None;
+        }
         self.eng.descriptor(fn_hash)
     }
 
     fn receipt(&self, hash: &str) -> Option<Cow<'_, [u8]>> {
+        if !self.ready() {
+            return None;
+        }
         self.eng.receipt(hash)
     }
 
     fn manifest(&self, entry: &str) -> Option<Cow<'_, [u8]>> {
+        if !self.ready() {
+            return None;
+        }
         if let Some(b) = self.eng.store.manifest(entry) {
             return Some(b);
         }
         if let Ok(Some(b)) = self.eng.manifest_bytes(entry) {
             return Some(Cow::Owned(b));
         }
-        self.eng.manifest_asof(entry, &self.asof).ok().flatten().map(Cow::Owned)
+        self.eng.manifest_asof_inner(entry, &self.asof, None).ok().flatten().map(Cow::Owned)
     }
 
     fn evaluate(&self, cell: &Cell, asof: &str) -> Option<Scalar> {
+        if !self.ready() {
+            return None;
+        }
         self.eng.evaluate(cell, asof)
     }
 
     fn evaluation(&self, cell: &Cell, asof: &str) -> Option<Evaluation> {
+        if !self.ready() {
+            return None;
+        }
         self.eng.evaluation(cell, asof)
     }
 }

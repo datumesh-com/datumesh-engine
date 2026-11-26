@@ -2,6 +2,31 @@
 
 All notable changes to `datumesh-engine`.
 
+## 0.6.2
+
+Guard patch, Part G (CONTRACT-guard-patch.md): member-set rows, a manifest policy, rebuilt manifests,
+reuse of stored computed versions, and the fixes from the independent review. Requires datumesh-store
+0.6.5 (migrations 17 / 13 before reads).
+
+### Added
+
+- `ManifestPolicy` (`Store`, `MemberSetOnly`, `StoreUpTo(usize)`, the default `Store`) and
+  `EngineBuilder::manifests`: how a slice read's manifest is stored. A member-set row is written for
+  every slice read, whatever the policy.
+- `EngineBuilder::store_past_reads(bool)`: off, a read as of a past time stores only slice definitions.
+- `Engine::manifest_asof(entry, asof)`: a manifest rebuilt from its slice as of `asof`, never stored.
+  Over the fuel it is refused as the listing goes.
+- `Engine::resolver_for(asof)` and `ReceiptResolver`: a per-receipt resolver serving a manifest as of
+  the receipt's asof when none is held.
+- `Engine::get_cell_current(cell, arrival)`: a current read as of a pinned arrival.
+
+### Changed
+
+- A stored version's memo entry starts at the later of its asof and its recorded time; its validity
+  ends at the next version recorded after it (the store's `next_version_after`).
+- Each request passes the store's barrier before its first store read.
+- Reuse of a stored computed version's slice needs no member read while the slice's `seq` holds.
+
 ## 0.6.1
 
 Local acceptance of restricted licences (CONTRACT-protocol-part1, E1; DECISIONS-round-protocol D4,

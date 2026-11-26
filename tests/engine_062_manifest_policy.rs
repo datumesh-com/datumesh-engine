@@ -26,7 +26,8 @@
 //!                        pub members: u64, pub tx: Option<String>, pub asof: String,
 //!                        pub licences: Vec<String>,
 //!                        pub seen_seq: i64 }  // the slice's seq read before the members (decided 26 Nov)
-//! fn slice_seq(&self, slice: &Slice) -> Result<i64>; // the highest insertion seq the slice matches  // the members' distinct licences, sorted
+//! fn slice_seq(&self, slice: &Slice) -> Result<i64>; // the highest insertion seq the slice matches
+//! fn fn_seq(&self, fn_hash: &str) -> Result<i64>;    // the function's highest seq: the quick check  // the members' distinct licences, sorted
 //!                                                    // (decided 26 Nov); a scoped member counts
 //!                                                    // with the mesh's own licence
 //! fn put_member_set(&self, set: &MemberSet) -> Result<bool>;
@@ -416,6 +417,59 @@ fn the_row_keeps_the_slices_seq_and_reuse_stands_only_while_it_holds() {
         w.publish(&temp(&w, "north", "z"), "5", &t(12, 0));
         assert!(w.store.slice_seq(&sl).unwrap() > row.seen_seq, "{policy:?}");
         reuse("a new member", false);
+    }
+}
+
+#[test]
+fn reuse_takes_the_quick_path_while_the_functions_seq_holds() {
+    // Store::fn_seq(fn_hash) (decided 26 Nov): at or below the row's seen_seq, no version of the
+    // function was inserted since, and the reuse needs no slice_seq (no candidate walk); a version of
+    // the same function outside the slice raises fn_seq, takes the slow path, finds slice_seq
+    // unchanged, and the version stands. Observed by statement counts: the slow path runs more.
+    for policy in [ManifestPolicy::MemberSetOnly, ManifestPolicy::Store] {
+        let w = world();
+        seed(&w);
+        let first = w.engine_with(with(policy)).get(&north(&w), Some(&t(20, 0))).unwrap();
+        let r = receipt_of(&first);
+        let row = w.store.member_set(&r.inputs()[0]).unwrap().expect("the row");
+        let fh = slice_of_row(&row).fn_hash().to_string();
+        // seed() wrote south's version after north's: fn_seq is above the row's seen_seq already;
+        // a first reuse may take the slow path. A second engine's reuse after nothing new: the same.
+        let wire = common::wire::Wire::start(&w.db().config);
+        let statements = |what: &str| {
+            let e = counted(&w, &wire, policy);
+            wire.take();
+            assert_eq!(e.get(&north(&w), Some(&t(20, 0))).unwrap(), first, "{policy:?} {what}: the version stands");
+            let sql = wire.take();
+            assert_eq!(member_reads(&sql), 0, "{policy:?} {what}: no member read: {sql:#?}");
+            sql.values().sum::<usize>()
+        };
+        // A world where fn_seq equals seen_seq: north's slice holds the function's latest version.
+        let w2 = world();
+        w2.publish(&temp(&w2, "south", "a"), "1000", &t(9, 0));
+        w2.publish(&temp(&w2, "north", "a"), "10", &t(10, 0));
+        w2.publish(&temp(&w2, "north", "b"), "20", &t(11, 0));
+        let first2 = w2.engine_with(with(policy)).get(&north(&w2), Some(&t(20, 0))).unwrap();
+        let row2 = w2.store.member_set(&receipt_of(&first2).inputs()[0]).unwrap().unwrap();
+        assert_eq!(w2.store.fn_seq(&fh).unwrap(), row2.seen_seq, "{policy:?}: nothing of the function since");
+        let wire2 = common::wire::Wire::start(&w2.db().config);
+        let count2 = |what: &str| {
+            let e = counted(&w2, &wire2, policy);
+            wire2.take();
+            assert_eq!(e.get(&north(&w2), Some(&t(20, 0))).unwrap(), first2, "{policy:?} {what}");
+            let sql = wire2.take();
+            assert_eq!(member_reads(&sql), 0, "{policy:?} {what}: {sql:#?}");
+            sql.values().sum::<usize>()
+        };
+        let quick = count2("fn_seq == seen_seq");
+        // A version of the same function outside the slice (south): fn_seq rises, slice_seq does not.
+        w2.publish(&temp(&w2, "south", "z"), "5", &t(12, 0));
+        assert!(w2.store.fn_seq(&fh).unwrap() > row2.seen_seq);
+        assert_eq!(w2.store.slice_seq(&slice_of_row(&row2)).unwrap(), row2.seen_seq);
+        let slow = count2("a version of the function outside the slice");
+        assert!(slow > quick, "{policy:?}: the slow path runs the exact slice_seq ({slow} statements against {quick})");
+        // In the first world (fn_seq already above seen_seq) the reuse is correct too.
+        statements("fn_seq above seen_seq");
     }
 }
 

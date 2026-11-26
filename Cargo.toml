@@ -154,3 +154,7 @@ required-features = ["native-test"]
 [[test]]
 name = "engine_062_manifest_policy"
 required-features = ["native-test"]
+
+[[test]]
+name = "engine_062_recorded"
+required-features = ["native-test"]

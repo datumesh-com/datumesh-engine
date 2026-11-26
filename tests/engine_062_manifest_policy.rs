@@ -364,27 +364,8 @@ fn a_new_member_after_the_rows_tx_makes_it_re_evaluate() {
     assert_eq!(w.calls(TOTAL), 3);
 }
 
-#[test]
-fn a_new_member_recorded_with_an_older_tx_still_makes_it_re_evaluate() {
-    // A path that stores a cell with a tx from elsewhere (a bundle, an import of signed receipts, a
-    // cross-mesh import, a publish line with its own `tx`) may record a new member whose tx is at or
-    // before the row's tx. The member answers as of every time from its tx on, so a read now must
-    // see it: "the slice's latest change" cannot be the greatest member tx alone (the store keeps no
-    // recording time of its own today).
-    let w = world();
-    seed(&w);
-    let first =
-        receipt_of(&w.engine_with(with(ManifestPolicy::MemberSetOnly)).get(&north(&w), Some(&t(20, 0))).unwrap());
-    assert_eq!(first.value(), &num("30"));
-    let row = w.store.member_set(&first.inputs()[0]).unwrap().unwrap();
-    assert_eq!(row.tx.as_deref(), Some(t(11, 0).as_str()));
-    // A new station, recorded now with tx the 9th: before the row's tx (the 11th).
-    w.publish(&temp(&w, "north", "z"), "7", &t(9, 0));
-    let e = w.engine_with(with(ManifestPolicy::MemberSetOnly));
-    let r = receipt_of(&e.get(&north(&w), Some(&t(22, 0))).unwrap());
-    assert_eq!(r.value(), &num("37"), "the new member is read, whatever its tx");
-    assert_eq!(w.calls(TOTAL), 2);
-}
+// A new member with an older signed time: engine_062_recorded.rs (G9), on a store that records at
+// its clock; without one the store records the signed time, as before migration 17.
 
 #[test]
 fn a_withdrawal_after_the_rows_tx_makes_it_re_evaluate() {

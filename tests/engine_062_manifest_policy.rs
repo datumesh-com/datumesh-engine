@@ -418,7 +418,8 @@ fn the_row_carries_the_members_licences_and_reuse_reads_no_member() {
         // Not entitled: the publisher's key document no longer declares the licence (so the stored
         // version is not entitled at its issued, and the rule refuses now): refused, still with no
         // member read and nothing written.
-        w.declare(CALC, "{}");
+        // (A declarations document holds 1 to 64 names: it now declares another function only.)
+        w.declare(CALC, &declaration("calc.example.net/other", RESTRICTED, "2020-01-01T00:00:00.000000Z", None));
         let e = counted(&w, &wire, policy);
         wire.take();
         match e.get(&total, None) {

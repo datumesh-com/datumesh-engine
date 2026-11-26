@@ -15,6 +15,11 @@
 //!     MemberSetOnly,  // no put_manifest; the member-set row only
 //! }
 //! impl EngineBuilder { pub fn manifests(self, policy: ManifestPolicy) -> Self; }
+//! // The user's decision of 26 Nov: a read as of a past time (an asof before the clock's now) is
+//! // answered and signed, and stores nothing: no receipt, no computed version, no member-set row, no
+//! // manifest. Default true (stores, as today: datumesh-local); the mesh sets false whatever its
+//! // manifest policy. Not named by the contract: the test writer's choice of shape.
+//! impl EngineBuilder { pub fn store_past_reads(self, store: bool) -> Self; }
 //!
 //! // datumesh_store 0.6.5 (see the store's tests/store_065_member_sets.rs)
 //! pub struct MemberSet { pub entry, pub slice_id, pub members_hash, pub fn_hash, pub slice: Vec<u8>,
@@ -430,7 +435,7 @@ fn flood(w: &World) -> datumesh_core::CellRef {
 fn flood_timeline() -> (World, Receipt, Vec<u8>) {
     let w = flood_world();
     w.clock.set(&t(12, 0));
-    let e = w.engine_with(with(ManifestPolicy::MemberSetOnly));
+    let e = w.engine_with(mesh());
     let a0 = e.get(&flood(&w), None).unwrap();
     let r0 = receipt_of(&a0);
     assert_eq!(r0.value(), &num("300"));
@@ -454,8 +459,10 @@ fn verifies_with(e: &Engine, bytes: &[u8], keys: &datumesh_core::Keys, what: &st
 #[test]
 fn flood_a_read_as_of_between_t0_and_t1_is_the_t0_version() {
     let (w, r0, b0) = flood_timeline();
-    let e = w.engine_with(with(ManifestPolicy::MemberSetOnly));
+    let e = w.engine_with(mesh());
+    let rows = stored_rows(&w);
     let a = e.get(&flood(&w), Some(&t(13, 0))).unwrap();
+    assert_eq!(stored_rows(&w), rows, "a past read stores nothing");
     assert_eq!(bytes_of(&a), b0, "case 1: the T0 version, old members, old value");
     verifies_recomputed(&e, &b0, "the T0 receipt");
     let m = Manifest::from_json(&e.manifest(&r0.inputs()[0]).expect("rebuilt as of the row's asof")).unwrap();
@@ -463,33 +470,96 @@ fn flood_a_read_as_of_between_t0_and_t1_is_the_t0_version() {
 }
 
 #[test]
-fn flood_a_read_as_of_between_t1_and_now_has_the_new_station() {
-    let (w, r0, _) = flood_timeline();
-    let e = w.engine_with(with(ManifestPolicy::MemberSetOnly));
-    let r = receipt_of(&e.get(&flood(&w), Some(&t(15, 0))).unwrap());
+fn flood_a_read_as_of_between_t1_and_now_has_the_new_station_and_stores_nothing() {
+    let (w, r0, b0) = flood_timeline();
+    let before = stored_rows(&w);
+    let e = w.engine_with(mesh());
+    let a2 = e.get(&flood(&w), Some(&t(15, 0))).unwrap();
+    let r = receipt_of(&a2);
     assert_eq!(r.value(), &num("350"), "case 2: the new station counts, not the T0 version");
-    assert_ne!(r.hash(), r0.hash());
     assert_ne!(r.inputs()[0], r0.inputs()[0], "another member set");
-    let m = Manifest::from_json(&e.manifest(&r.inputs()[0]).unwrap()).unwrap();
-    assert_eq!(m.members().len(), 3);
-    // What an as-of read stores (reported): its receipt is a computed version at the receipt's tx and
-    // asof, and its member set a row with the request's asof.
-    let row = w.store.member_set(&r.inputs()[0]).unwrap().expect("case 2 writes the row of its read");
-    assert_eq!((row.tx.as_deref(), row.asof.as_str()), (Some(t(14, 0).as_str()), t(15, 0).as_str()));
     assert_eq!((r.tx(), r.asof()), (t(14, 0).as_str(), t(14, 0).as_str()));
-    let v = w.store.computed_asof(&r.cell().id(), &t(15, 0)).unwrap().expect("a computed version");
+    // The user's decision (26 Nov): a read as of a past time is answered and signed, and stores
+    // nothing: no receipt, no computed version, no member-set row, no manifest.
+    assert_eq!(stored_rows(&w), before, "case 2 writes nothing");
+    assert_eq!(w.store.member_set(&r.inputs()[0]).unwrap(), None);
+    assert!(w.store.receipt(r.hash()).is_none(), "the receipt is answered, not stored");
+    // A plain read now after it: the new answer, and it stores (a version and a row).
+    let now = receipt_of(&w.engine_with(mesh()).get(&flood(&w), None).unwrap());
+    assert_eq!(now.value(), &num("350"), "case 3 after case 2");
+    assert_eq!(now.inputs(), r.inputs(), "the same member set");
+    let after = stored_rows(&w);
+    assert_eq!(after[1], before[1] + 1, "case 3 writes a computed version");
+    assert_eq!(after[2], before[2] + 1, "case 3 writes a member-set row");
+    let row = w.store.member_set(&now.inputs()[0]).unwrap().expect("case 3's row");
+    assert_eq!((row.tx.as_deref(), row.asof.as_str()), (Some(t(14, 0).as_str()), t(16, 0).as_str()));
+    let v = w.store.computed_asof(&now.cell().id(), &t(16, 0)).unwrap().expect("case 3's computed version");
     assert_eq!(
         (v.receipt_hash.as_str(), v.tx.as_str(), v.asof.as_str()),
-        (r.hash(), t(14, 0).as_str(), t(14, 0).as_str())
+        (now.hash(), t(14, 0).as_str(), t(14, 0).as_str())
     );
-    // A plain read now after it: the same version (nothing changed since), no new row.
-    let rows = w.db().count("member_sets");
-    let now = receipt_of(&w.engine_with(with(ManifestPolicy::MemberSetOnly)).get(&flood(&w), None).unwrap());
-    assert_eq!(now.hash(), r.hash(), "case 3 after case 2 reuses case 2's version");
-    assert_eq!(w.db().count("member_sets"), rows);
-    // Both receipts verify, each rebuilt as of its own asof.
-    verifies_recomputed(&e, &bytes_of(&e.get(&flood(&w), Some(&t(13, 0))).unwrap()), "the T0 receipt");
-    verifies_recomputed(&e, &w.stored_bytes(r.hash()), "the case 2 receipt");
+    // After it case 1 is still the T0 version, and stores nothing either.
+    let rows = stored_rows(&w);
+    assert_eq!(bytes_of(&w.engine_with(mesh()).get(&flood(&w), Some(&t(13, 0))).unwrap()), b0);
+    assert_eq!(stored_rows(&w), rows);
+    // Every receipt verifies, each manifest rebuilt from a row (case 2's member set is case 3's:
+    // its row is written by the current read).
+    let fresh = w.engine_with(mesh());
+    verifies_recomputed(&fresh, &b0, "the T0 receipt");
+    verifies_recomputed(&fresh, &bytes_of(&a2), "the case 2 receipt");
+    verifies_recomputed(&fresh, &w.stored_bytes(now.hash()), "the case 3 receipt");
+    assert_eq!(stored_rows(&w), rows, "verification stores nothing");
+}
+
+#[test]
+fn a_past_read_stores_nothing_under_either_policy_and_a_current_read_stores() {
+    for policy in [ManifestPolicy::MemberSetOnly, ManifestPolicy::Store] {
+        let w = world();
+        seed(&w);
+        w.clock.set(&t(20, 0));
+        let before = stored_rows(&w);
+        let e = w.engine_with(move |b| b.manifests(policy).store_past_reads(false));
+        let past = receipt_of(&e.get(&north(&w), Some(&t(19, 0))).unwrap());
+        assert_eq!(past.value(), &num("30"));
+        assert_eq!(stored_rows(&w), before, "{policy:?}: a past read stores nothing");
+        assert_eq!(w.calls(TOTAL), 1);
+        // Asked again (memo or not), still nothing.
+        let fresh = w.engine_with(move |b| b.manifests(policy).store_past_reads(false));
+        assert_eq!(receipt_of(&fresh.get(&north(&w), Some(&t(19, 0))).unwrap()).value(), &num("30"));
+        assert_eq!(stored_rows(&w), before, "{policy:?}");
+        // A current read (no asof, or the clock's now) stores, as today.
+        let cur = receipt_of(&fresh.get(&north(&w), None).unwrap());
+        assert_eq!(cur.value(), &num("30"));
+        let after = stored_rows(&w);
+        assert!(
+            after[0] > before[0] && after[1] > before[1] && after[2] > before[2],
+            "{policy:?}: {before:?} -> {after:?}"
+        );
+        assert_eq!(after[3] > before[3], policy == ManifestPolicy::Store, "{policy:?}: a manifest only under Store");
+    }
+    // The default (local's): past reads store as today.
+    let w = world();
+    seed(&w);
+    w.clock.set(&t(20, 0));
+    let before = stored_rows(&w);
+    receipt_of(&w.engine().get(&north(&w), Some(&t(19, 0))).unwrap());
+    assert!(stored_rows(&w)[1] > before[1], "by default an as-of read stores its version, as today");
+}
+
+/// [receipts, computed versions, member-set rows, manifests].
+fn stored_rows(w: &World) -> [i64; 4] {
+    [
+        w.db().count("receipts"),
+        w.db().count("computed_versions"),
+        w.db().count("member_sets"),
+        w.db().count("manifests"),
+    ]
+}
+
+/// The engine the mesh runs at DATUMESH_MANIFEST_STORE_MAX=0: no manifest, and nothing stored by a
+/// read as of a past time.
+fn mesh() -> impl FnOnce(datumesh_engine::EngineBuilder) -> datumesh_engine::EngineBuilder {
+    |b| b.manifests(ManifestPolicy::MemberSetOnly).store_past_reads(false)
 }
 
 #[test]
@@ -497,7 +567,7 @@ fn flood_a_plain_read_now_has_the_new_station_and_writes_a_new_version() {
     let (w, r0, b0) = flood_timeline();
     let versions = w.db().count("computed_versions");
     let rows = w.db().count("member_sets");
-    let e = w.engine_with(with(ManifestPolicy::MemberSetOnly));
+    let e = w.engine_with(mesh());
     let r = receipt_of(&e.get(&flood(&w), None).unwrap());
     assert_eq!(r.value(), &num("350"), "case 3: the new answer");
     assert_eq!(w.db().count("computed_versions"), versions + 1, "a new computed version");
@@ -508,7 +578,7 @@ fn flood_a_plain_read_now_has_the_new_station_and_writes_a_new_version() {
     let v = w.store.computed_asof(&r.cell().id(), &t(16, 0)).unwrap().unwrap();
     assert_eq!((v.tx.as_str(), v.asof.as_str()), (t(14, 0).as_str(), t(14, 0).as_str()));
     // After it, case 1 still answers the T0 version.
-    let fresh = w.engine_with(with(ManifestPolicy::MemberSetOnly));
+    let fresh = w.engine_with(mesh());
     assert_eq!(bytes_of(&fresh.get(&flood(&w), Some(&t(13, 0))).unwrap()), b0);
     // Case 4: both verify at level recomputed, each manifest rebuilt as of its own row's asof.
     verifies_recomputed(&fresh, &b0, "the T0 receipt");

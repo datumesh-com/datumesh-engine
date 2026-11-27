@@ -424,7 +424,7 @@ impl World {
             assert!(out.ok, "{test}: {out:?}\n{}", String::from_utf8_lossy(bytes));
             assert_eq!(out.level, Some(Level::Recomputed), "{test}: {out:?}\n{}", String::from_utf8_lossy(bytes));
         }
-        self.dump(test);
+        self.dump_with(test, Some(engine));
         receipts.len()
     }
 }
@@ -457,6 +457,14 @@ impl World {
     /// manifest text}, "receipt": receipt text}`, with the manifest of each slice entry among
     /// its inputs, from the store.
     pub fn dump(&self, test: &str) {
+        self.dump_with(test, None)
+    }
+
+    /// [`dump`](World::dump), the manifests of slice entries the store does not hold taken from
+    /// `engine` (guard patch: under MemberSetOnly none is stored): its row rebuild
+    /// (`Resolver::manifest`), else the rebuild as of the receipt's asof (`manifest_asof`). Panics
+    /// when neither gives the bytes, so that the verifiers get every slice entry's manifest.
+    pub fn dump_with(&self, test: &str, engine: Option<&Engine>) {
         let Ok(dir) = std::env::var("DATUMESH_ENGINE_DUMP") else { return };
         if dir.is_empty() {
             return;
@@ -474,8 +482,17 @@ impl World {
                 .iter()
                 .filter(|e| e.starts_with("slice:"))
                 .map(|e| {
-                    let m = self.store.manifest(e).expect("the manifest of a slice entry is stored");
-                    (e.clone(), Value::String(String::from_utf8(m.into_owned()).unwrap()))
+                    let m: Vec<u8> = match self.store.manifest(e) {
+                        Some(m) => m.into_owned(),
+                        None => engine
+                            .and_then(|en| {
+                                Resolver::manifest(en, e)
+                                    .map(|m| m.into_owned())
+                                    .or_else(|| en.manifest_asof(e, r.asof()).ok().flatten())
+                            })
+                            .expect("the manifest of a slice entry is stored, or the engine rebuilds it"),
+                    };
+                    (e.clone(), Value::String(String::from_utf8(m).unwrap()))
                 })
                 .collect();
             let line = Value::Object(vec![

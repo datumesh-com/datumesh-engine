@@ -143,16 +143,25 @@ fn a_backfill_with_an_old_signed_time_is_seen_now_and_left_out_before_its_arriva
 }
 
 #[test]
-fn a_correction_signed_earlier_but_recorded_later_answers_from_its_recorded_time() {
+fn a_correction_signed_earlier_is_refused_and_changes_nothing() {
+    // Decided 27 Nov (user), "backdating on the same cell is refused": a version of an existing cell
+    // signed not later than its latest signed tx is NotLater, whatever its recorded time; the answers
+    // and the T0 receipt are unchanged. (Before: accepted when recorded later.)
     let w = recording_world();
     let (r0, b0) = t0(&w);
-    // A correction of station a, signed on the 9th (before its first version's 10th), recorded on the 14th.
+    // A correction of station a, signed on the 9th (before its version of the 10th), offered on the 14th.
     w.clock.set(&t(14, 0));
-    w.publish(&level(&w, "a", DAY), "110", &t(9, 0));
+    let a = level(&w, "a", DAY);
+    let bytes = w.sign_stored(&a, num("110"), &t(9, 0), &t(9, 0));
+    let h = w.store.put_receipt(&bytes).unwrap();
+    match w.store.put_version(&a.id(), &t(9, 0), &h) {
+        Err(datumesh_store::Error::NotLater { .. }) => {}
+        other => panic!("a correction signed before the cell's latest: {other:?}"),
+    }
     w.clock.set(&t(16, 0));
     let e = w.engine_with(mesh());
-    assert_eq!(receipt_of(&e.get(&flood(&w), None).unwrap()).value(), &num("310"), "the correction answers now");
-    assert_eq!(bytes_of(&e.get(&flood(&w), Some(&t(13, 0))).unwrap()), b0, "not before it was recorded");
+    assert_eq!(bytes_of(&e.get(&flood(&w), None).unwrap()), b0, "nothing changes: the T0 version stands");
+    assert_eq!(bytes_of(&e.get(&flood(&w), Some(&t(13, 0))).unwrap()), b0);
     verifies(&*e, &b0, "the T0 receipt");
     assert_eq!(r0.value(), &num("300"));
 }

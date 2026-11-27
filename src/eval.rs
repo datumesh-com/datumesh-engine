@@ -615,12 +615,9 @@ impl<'e> Req<'e> {
         // by tx answers: from that one's asof. Only the memo needs to know.
         // The memo's bound: the first version the store recorded after this one (one row, G9), from
         // the time it answers: the later of its asof and its recording (review item 7).
+        // The least start of the versions recorded after this one (decided 27 Nov, A1): one row.
         let hi = if self.eng.memo.enabled() {
-            self.eng
-                .store
-                .next_version_after(id, &v.recorded)
-                .map_err(store_err("next_version_after"))?
-                .map(|w| std::cmp::max(w.asof, w.recorded))
+            self.eng.store.later_bound(id, &v.recorded).map_err(store_err("later_bound"))?
         } else {
             None
         };
@@ -2030,8 +2027,7 @@ impl<'e> Req<'e> {
     /// Whether the request writes nothing but slice definitions: a read as of a past time when
     /// the engine does not store those (`store_past_reads`), or a scenario.
     pub(crate) fn stores_nothing(&self) -> bool {
-        self.scope.is_some()
-            || (!self.current && self.asof.as_str() < self.issued.as_str() && !self.eng.store_past_reads)
+        self.scope.is_some() || (!self.current && !self.eng.store_past_reads)
     }
 
     /// Writes the request's new manifests, receipts and computed versions: manifests and

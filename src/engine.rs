@@ -405,7 +405,9 @@ impl Engine {
             return Ok(Answer::NOT_COVERED);
         };
         let resolved = cell.resolve(&fn_hash).map_err(EngineError::Invalid)?;
-        self.answer(&resolved, &a, &now, false)
+        // Current only when no asof is named (decided 27 Nov, B1): a named asof, past or future, stores
+        // nothing but the slice definition.
+        self.answer(&resolved, &a, &now, asof.is_none() && cell.asof.is_none())
     }
 
     /// The cell `cell` denotes, its function name resolved as of `asof` (else `cell.asof`,
@@ -441,7 +443,7 @@ impl Engine {
         lexical::check_instant(&a, "$.asof").map_err(EngineError::Invalid)?;
         check_no_slice(&cell.args)?;
         self.barrier()?;
-        self.answer(cell, &a, &now, false)
+        self.answer(cell, &a, &now, asof.is_none())
     }
 
     /// The value of `cell` as of `arrival`, a current read whatever the clock reads when it is
@@ -699,10 +701,22 @@ impl Engine {
         let over = || EngineError::BudgetExceeded { fuel: self.fuel };
         if desc.lang == STORED {
             let limit = usize::try_from(self.fuel.saturating_add(1)).unwrap_or(usize::MAX);
-            let found = self
-                .store
-                .slice_member_hashes(&slice, asof, limit)
-                .map_err(|e| StoreError::new("slice_member_hashes", e))?;
+            // Under the deadline the listing runs within the time left (decided 27 Nov, B6); a store
+            // timeout is the budget's, and so is a deadline already passed.
+            let listed = match deadline {
+                None => self.store.slice_member_hashes(&slice, asof, limit),
+                Some(d) => {
+                    let left = d.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() {
+                        return Err(over());
+                    }
+                    self.store.slice_member_hashes_within(&slice, asof, limit, left)
+                }
+            };
+            let found = listed.map_err(|e| match e {
+                datumesh_store::Error::Timeout(_) => over(),
+                other => StoreError::new("slice_member_hashes", other).into(),
+            })?;
             if found.len() as u64 > self.fuel || late() {
                 return Err(over());
             }

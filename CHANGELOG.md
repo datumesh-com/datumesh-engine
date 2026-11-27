@@ -26,6 +26,10 @@ reuse of stored computed versions, and the fixes from the independent review. Re
   ends at the next version recorded after it (the store's `next_version_after`).
 - Each request passes the store's barrier before its first store read.
 - Reuse of a stored computed version's slice needs no member read while the slice's `seq` holds.
+- A named asof, past or future, stores nothing but the slice definition; only a request with no asof
+  (or a pending job, `get_cell_current`) is current.
+- `EngineError::InputUnavailable { what }`: the store did not answer in time (a request's barrier, a
+  read behind a writer). A rebuild's listing over its deadline is `BudgetExceeded`.
 
 ## 0.6.1
 

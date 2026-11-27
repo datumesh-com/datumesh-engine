@@ -287,6 +287,14 @@ pub enum EngineError {
         /// When it was suspended (an instant).
         suspended_at: String,
     },
+    /// The store did not answer within its time bound: a read waited behind a writer (the barrier
+    /// of a request, or a read of a store that has a timeout). Nothing was signed or stored for the
+    /// request; the mesh answers 503 `E_INPUT_UNAVAILABLE` (CONTRACT-guard-patch, second review B2).
+    /// Since 0.6.2.
+    InputUnavailable {
+        /// The store operation that timed out.
+        what: String,
+    },
     /// A computed receipt could not be signed: the core refused its members. In practice an
     /// input whose `asof` is later than the engine's clock (`E_TIME_ORDER`: `asof <= issued`).
     /// Added to the brief's list.
@@ -341,6 +349,9 @@ impl fmt::Display for EngineError {
             EngineError::NamespaceSuspended { host, suspended_at } => {
                 write!(f, "the namespace {host} is suspended since {suspended_at}; nothing was signed or stored")
             }
+            EngineError::InputUnavailable { what } => {
+                write!(f, "the store did not answer in time ({what}); nothing was signed or stored")
+            }
             EngineError::Invalid(e) => write!(f, "invalid request: {e}"),
             EngineError::Sign(e) => write!(f, "cannot sign the computed receipt: {e}"),
             EngineError::Override(code) => write!(f, "scenario override refused: {code}; nothing was computed"),
@@ -371,6 +382,7 @@ impl From<StoreError> for EngineError {
             datumesh_store::Error::NamespaceSuspended { host, suspended_at } => {
                 EngineError::NamespaceSuspended { host: host.clone(), suspended_at: suspended_at.clone() }
             }
+            datumesh_store::Error::Timeout(_) => EngineError::InputUnavailable { what: e.op.to_string() },
             _ => EngineError::Store(e),
         }
     }

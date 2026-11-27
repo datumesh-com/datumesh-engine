@@ -2,6 +2,12 @@
 
 All notable changes to `datumesh-engine`.
 
+## 0.7.0
+
+Requires datumesh-store 0.7.0 (the listing release, CONTRACT-http-listing.md). No change of behaviour or API in the
+engine itself: the store's `CatalogSource` gained a variant, and the engine re-exports and takes the store's types, so
+moving to the new store is a minor release here too.
+
 ## 0.6.2
 
 Guard patch, Part G (CONTRACT-guard-patch.md): member-set rows, a manifest policy, rebuilt manifests,
